@@ -74,8 +74,19 @@ rough edge: playing videos in the Gallery **while casting** can crash the
 Gallery's playback (hardware encoder and decoder share the video core; the
 droid stack does not always survive that — other players cope better).
 
-Planned next: convergence — keyboard/mouse on the phone, the TV as a real
-second screen with dockable windows.
+## Where this is heading: convergence
+
+This project owes its direction to **Ubuntu Touch**. Years ago, Canonical's
+phones did real convergence: plug in a keyboard and a mouse, put the screen
+on a TV, and the phone turned into a desktop with proper, dockable windows.
+The **Meizu Pro 5**, which shipped with Ubuntu Touch, was the author's
+gateway drug into Linux phones — and that experience never quite let go.
+(It is no coincidence that Imira's Wi-Fi Direct code descends from
+aethercast, Ubuntu Touch's display casting stack.)
+
+Sailfish OS never got that. Mirroring the screen — this repository — is
+step one. The goal is step two: keyboard and mouse on the phone, the TV as
+a real workspace with dockable windows. Convergence on Sailfish.
 
 ## License
 
