@@ -68,6 +68,14 @@
         <translation>Aus: 720p — flüssiger bei schwachem Funk. Schaltet live während der Übertragung um.</translation>
     </message>
     <message>
+        <source>Convergence (experimental)</source>
+        <translation>Convergence (experimentell)</translation>
+    </message>
+    <message>
+        <source>The TV becomes its own screen with app windows instead of mirroring the phone. Takes effect on the next cast start.</source>
+        <translation>Der TV wird ein eigener Bildschirm mit App-Fenstern, statt das Phone zu spiegeln. Gilt ab dem nächsten Cast-Start.</translation>
+    </message>
+    <message>
         <source>Audio delay</source>
         <translation>Audio-Versatz</translation>
     </message>

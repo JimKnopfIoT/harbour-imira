@@ -13,11 +13,11 @@ gcc -O2 -c protocol/lipstick-recorder-protocol.c -o /tmp/imira-lrp.o \
     \$(pkg-config --cflags wayland-client)
 g++ -O2 -std=c++14 -Wall -fPIC -Iprotocol -Isrc \
     src/main.cpp src/convert.cpp src/encoder.cpp src/recorder.cpp \
-    src/tsmux.cpp src/rtpsender.cpp src/orientation.cpp \
+    src/tsmux.cpp src/rtpsender.cpp src/orientation.cpp src/shmsource.cpp \
     src/audiocapture.cpp /tmp/imira-lrp.o \
     -o imira-castd \
     \$(pkg-config --cflags --libs wayland-client Qt5Sensors Qt5Core libpulse) \
-    -ldroidmedia -ldl -lpthread
+    -ldroidmedia -ldl -lpthread -lrt
 strip imira-castd
 "
 echo "OK: $HERE/imira-castd"

@@ -193,7 +193,8 @@ while true; do
             break
         fi
         for d in /proc/[0-9]*; do
-            [ "$(cat "$d/comm" 2>/dev/null)" = "imira-castd" ] && kill -9 "${d#/proc/}" 2>/dev/null
+            C=$(cat "$d/comm" 2>/dev/null)
+            { [ "$C" = "imira-castd" ] || [ "$C" = "imira-comp" ]; } && kill -9 "${d#/proc/}" 2>/dev/null
         done
         W="$LIBEXEC/wpa_cli-p2p -p $CTRL -i $IFACE"
         $W p2p_group_remove "$IFACE" >/dev/null 2>&1
@@ -207,7 +208,10 @@ while true; do
         else
             IMIRA_CEA=00000080; IMIRA_W=1920; IMIRA_H=1080; IMIRA_BR=8000000
         fi
-        export IMIRA_CEA IMIRA_W IMIRA_H IMIRA_BR
+        # Betriebsart aus der App: "convergence" = eigener Compositor als
+        # virtueller TV-Bildschirm; alles andere/keine Datei = Spiegeln.
+        IMIRA_MODE=$(cat /tmp/imira-mode 2>/dev/null)
+        export IMIRA_CEA IMIRA_W IMIRA_H IMIRA_BR IMIRA_MODE
         PEER=$(cat /tmp/imira-peer 2>/dev/null)
         FREQ=""
         [ "$IFACE" = "wlan1" ] && FREQ=2437   # nur die Alfa braucht den Zwang
@@ -244,7 +248,8 @@ while true; do
 
     # Aufräumen nach Stop.
     for d in /proc/[0-9]*; do
-        [ "$(cat "$d/comm" 2>/dev/null)" = "imira-castd" ] && kill -9 "${d#/proc/}" 2>/dev/null
+        C=$(cat "$d/comm" 2>/dev/null)
+        { [ "$C" = "imira-castd" ] || [ "$C" = "imira-comp" ]; } && kill -9 "${d#/proc/}" 2>/dev/null
     done
     # Falls der Daemon hart starb, bevor er seine Stille-Senke entladen
     # konnte: Modul anhand des Sink-Namens finden und entladen, sonst
