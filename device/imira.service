@@ -1,0 +1,12 @@
+[Unit]
+Description=imira Miracast session service
+After=multi-user.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/imira/imira-session.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

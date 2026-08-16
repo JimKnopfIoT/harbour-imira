@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+X-Nemo-Application-Type=silica-qt5
+Icon=harbour-imira
+Name=Imira
+Comment=Miracast screen mirroring
+Exec=harbour-imira
+
+[X-Sailjail]
+# Sandboxing must stay off: the app exchanges flag/status files with the imira
+# system service through the real /tmp (/tmp/imira-start, /tmp/imira-stop,
+# /tmp/imira-status). Inside a Sailjail sandbox /tmp is a private tmpfs, so a
+# sandboxed app would write flags nobody reads and poll a status file nobody
+# writes — Start would silently do nothing.
+Sandboxing=Disabled
+OrganizationName=io.github.jimknopfiot
+ApplicationName=harbour-imira

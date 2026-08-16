@@ -1,0 +1,23 @@
+# Lokale Helfer (maschinenspezifisch, enthalten Gerätenamen) — nie veröffentlichen
+*.local.sh
+# Referenz-Checkouts und Build-Artefakte. Der wpa-Checkout ist ein eigenes
+# Git-Repo (Rezept: vendor/README.md) und bleibt komplett draußen.
+vendor/refs/
+vendor/wpa_supplicant-p2p/
+# Kompilierte Binaries — werden lokal gebaut (build-castd.sh / qmake)
+/harbour-imira
+daemon/imira-castd
+*.o
+imira-test.ts
+RPMS/
+build*.log
+CLAUDE.md
+node_modules/
+Makefile
+.tmp/
+moc_*.cpp
+qrc_*.cpp
+*.qm
+documentation.list
+translations/harbour-imira.ts
+media/
