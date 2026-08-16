@@ -9,12 +9,14 @@
 */
 #include <QGuiApplication>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QQuickView>
 #include <QScopedPointer>
 
 #include <sailfishapp.h>
 
 #include "castcontroller.h"
+#include "tvpreview.h"
 
 int main(int argc, char *argv[])
 {
@@ -25,6 +27,10 @@ int main(int argc, char *argv[])
     app->setApplicationVersion(QStringLiteral(APP_VERSION));
 
     QScopedPointer<QQuickView> view(SailfishApp::createView());
+    // Live view of the TV desktop for the swipe-left page; ownership goes
+    // to the engine.
+    view->engine()->addImageProvider(QStringLiteral("tvview"),
+                                     new TvPreview);
 
     // Context property rather than a registered type: there is exactly one
     // controller and every page (cover included) shares its polled state.
