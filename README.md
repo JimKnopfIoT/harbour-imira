@@ -79,8 +79,8 @@ droid stack does not always survive that — other players cope better).
 This project owes its direction to **Ubuntu Touch**. Years ago, Canonical's
 phones did real convergence: plug in a keyboard and a mouse, put the screen
 on a TV, and the phone turned into a desktop with proper, dockable windows.
-The **Meizu Pro 5**, which shipped with Ubuntu Touch, was the author's
-gateway drug into Linux phones — and that experience never quite let go.
+The **Meizu Pro 5**, which shipped with Ubuntu Touch, was my entry drug 
+into Linux phones — and that experience never quite let me go.
 When Canonical pulled the plug on it in 2017, that felt like a real loss:
 the most convincing answer yet to "why would a phone be a computer?" simply
 stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
