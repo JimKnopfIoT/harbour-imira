@@ -1,0 +1,13 @@
+diff --git a/rpm/build-config b/rpm/build-config
+index a321f49..3d7fc44 100644
+--- a/rpm/build-config
++++ b/rpm/build-config
+@@ -509,7 +509,7 @@ CONFIG_AP=y
+ # This can be used to enable P2P support in wpa_supplicant. See README-P2P for
+ # more information on P2P operations.
+ # Keep this disabled on SailfishOS. Will break AP mode on C2 (and XperiaX)
+-# CONFIG_P2P=y
++CONFIG_P2P=y
+ 
+ # Enable TDLS support
+ CONFIG_TDLS=y

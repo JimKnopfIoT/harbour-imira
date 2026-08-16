@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="172" height="172" viewBox="0 0 172 172" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e6f8e"/>
+      <stop offset="1" stop-color="#0d2b45"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffb35c"/>
+      <stop offset="1" stop-color="#ff8a3d"/>
+    </linearGradient>
+  </defs>
+  <!-- runde Grundform -->
+  <circle cx="86" cy="86" r="84" fill="url(#bg)"/>
+  <!-- TV-Rahmen -->
+  <rect x="34" y="46" width="104" height="68" rx="7" fill="none"
+        stroke="#f4f7fa" stroke-width="8"/>
+  <!-- Standfuß -->
+  <line x1="66" y1="128" x2="106" y2="128" stroke="#f4f7fa"
+        stroke-width="8" stroke-linecap="round"/>
+  <!-- Cast-Wellen aus der linken unteren Ecke des Bildschirms -->
+  <path d="M 46 102 a 40 40 0 0 1 40 40" fill="none" stroke="url(#wave)"
+        stroke-width="9" stroke-linecap="round" transform="translate(0,-32)"/>
+  <path d="M 46 116 a 26 26 0 0 1 26 26" fill="none" stroke="url(#wave)"
+        stroke-width="9" stroke-linecap="round" transform="translate(0,-32)"/>
+  <circle cx="49" cy="139" r="8" fill="url(#wave)" transform="translate(0,-32)"/>
+</svg>
