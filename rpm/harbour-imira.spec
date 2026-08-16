@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.8.0
+Version:    0.9.0
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -75,6 +75,9 @@ install -d %{buildroot}/usr/libexec/imira
 # Screen recorder + encoder + RTP sender. Built by daemon/build-castd.sh.
 install -m 0755 daemon/imira-castd %{buildroot}/usr/libexec/imira/imira-castd
 
+# Convergence compositor (virtual TV screen). Built by daemon/comp/build-comp.sh.
+install -m 0755 daemon/comp/imira-comp %{buildroot}/usr/libexec/imira/imira-comp
+
 # Service-side scripts and the WFD RTSP protocol helper.
 install -m 0755 device/imira-session.sh   %{buildroot}/usr/libexec/imira/
 install -m 0755 device/imira-connect.sh   %{buildroot}/usr/libexec/imira/
@@ -131,6 +134,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 # setgid privileged: the Lipstick recorder socket is only reachable for the
 # privileged group; without the 2 bit the daemon records nothing.
 %attr(2755,root,privileged) /usr/libexec/imira/imira-castd
+%attr(0755,root,root) /usr/libexec/imira/imira-comp
 %attr(0755,root,root) /usr/libexec/imira/imira-session.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-connect.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-wfd-proto.py

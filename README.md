@@ -87,9 +87,13 @@ stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
 aethercast, Ubuntu Touch's display casting stack.)
 
 Sailfish OS never got that. This project is the attempt to bring something
-like it to a Sailfish phone. Mirroring the screen — this repository — is
-step one. The goal is step two: keyboard and mouse on the phone, the TV as
-a real workspace with dockable windows. Convergence on Sailfish.
+like it to a Sailfish phone. Mirroring the screen was step one. Step two has
+begun: the app has an experimental **convergence switch** — instead of
+mirroring, the TV becomes its own virtual screen (an own Wayland compositor,
+`daemon/comp/`), and Sailfish apps launched onto it appear there as windows
+while the phone stays fully usable. First app windows are showing on the TV;
+next up: a launcher on the TV, mouse/keyboard input, and real window
+management. Convergence on Sailfish.
 
 ## License
 

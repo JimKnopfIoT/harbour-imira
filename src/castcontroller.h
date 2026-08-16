@@ -53,6 +53,9 @@ class CastController : public QObject
     Q_PROPERTY(bool fullHd READ fullHd NOTIFY statusChanged)
     // A/V lip-sync trim in ms, positive = audio later. Applies live.
     Q_PROPERTY(int audioOffsetMs READ audioOffsetMs NOTIFY statusChanged)
+    // false = mirror the phone screen (default); true = convergence: the TV
+    // becomes its own virtual screen (imira-comp). Applies to the NEXT cast.
+    Q_PROPERTY(bool convergence READ convergence NOTIFY statusChanged)
 
 public:
     explicit CastController(QObject *parent = nullptr);
@@ -77,10 +80,12 @@ public:
     Q_INVOKABLE void setRotationMode(const QString &mode);
     Q_INVOKABLE void setFullHd(bool on);
     Q_INVOKABLE void setAudioOffset(int ms);
+    Q_INVOKABLE void setConvergence(bool on);
 
     QString rotationMode() const { return m_rotationMode; }
     bool fullHd() const { return m_fullHd; }
     int audioOffsetMs() const { return m_audioOffsetMs; }
+    bool convergence() const { return m_convergence; }
 
 signals:
     void statusChanged();
@@ -102,6 +107,7 @@ private:
     QString m_rotationMode = QStringLiteral("auto");
     bool    m_fullHd = true;
     int     m_audioOffsetMs = 0;
+    bool    m_convergence = false;
 };
 
 #endif // CASTCONTROLLER_H

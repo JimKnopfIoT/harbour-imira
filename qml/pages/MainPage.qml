@@ -160,6 +160,16 @@ Page {
                 onClicked: cast.setFullHd(!checked)
             }
 
+            TextSwitch {
+                text: qsTr("Convergence (experimental)")
+                description: qsTr("The TV becomes its own screen with app "
+                    + "windows instead of mirroring the phone. Takes effect "
+                    + "on the next cast start.")
+                automaticCheck: false
+                checked: cast.convergence
+                onClicked: cast.setConvergence(!checked)
+            }
+
             Slider {
                 width: parent.width
                 label: qsTr("Audio delay")

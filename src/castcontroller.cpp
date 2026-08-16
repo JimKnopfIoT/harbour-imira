@@ -19,6 +19,7 @@ const auto kAlivePath   = QStringLiteral("/tmp/imira-app-alive");
 const auto kRotatePath  = QStringLiteral("/tmp/imira-rotate");
 const auto kResPath     = QStringLiteral("/tmp/imira-res");
 const auto kAudioOffPath = QStringLiteral("/tmp/imira-audio-offset");
+const auto kModePath    = QStringLiteral("/tmp/imira-mode");
 
 // Touch an empty flag file. Nothing to write — the file's existence is the
 // message; the service removes it once acted upon.
@@ -146,6 +147,22 @@ void CastController::setAudioOffset(int ms)
     }
 }
 
+void CastController::setConvergence(bool on)
+{
+    // No file = mirror mode; the service reads this at cast start.
+    if (!on) {
+        QFile::remove(kModePath);
+    } else {
+        QFile f(kModePath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            f.write("convergence\n");
+    }
+    if (m_convergence != on) {
+        m_convergence = on;
+        emit statusChanged();
+    }
+}
+
 void CastController::poll()
 {
     // Heartbeat: proves to the service that the app is still alive.
@@ -195,10 +212,17 @@ void CastController::poll()
             audioOffsetMs = v;
     }
 
+    QFile mf(kModePath);
+    bool convergence = false;
+    if (mf.open(QIODevice::ReadOnly | QIODevice::Text))
+        convergence = QString::fromUtf8(mf.readLine()).trimmed()
+                      == QLatin1String("convergence");
+
     if (state != m_state || frames != m_frames || attempts != m_attempts
             || iface != m_iface || targetName != m_targetName
             || rotationMode != m_rotationMode || fullHd != m_fullHd
-            || audioOffsetMs != m_audioOffsetMs) {
+            || audioOffsetMs != m_audioOffsetMs
+            || convergence != m_convergence) {
         m_state = state;
         m_frames = frames;
         m_attempts = attempts;
@@ -207,6 +231,7 @@ void CastController::poll()
         m_rotationMode = rotationMode;
         m_fullHd = fullHd;
         m_audioOffsetMs = audioOffsetMs;
+        m_convergence = convergence;
         emit statusChanged();
     }
 

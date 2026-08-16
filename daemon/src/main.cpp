@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "audiocapture.h"
+#include "shmsource.h"
 #include "convert.h"
 #include "encoder.h"
 #include "orientation.h"
@@ -200,8 +201,15 @@ int main(int argc, char **argv)
     // the next captured frame through an encoder restart with new size.
     std::atomic<int> pendingW{0}, pendingH{0}, pendingBr{0};
 
+    // Convergence mode (IMIRA_INPUT=shm): frames come from imira-comp's
+    // virtual TV screen instead of the lipstick recorder — the phone UI
+    // stays interactive and is NOT mirrored.
+    const char *inputEnv = getenv("IMIRA_INPUT");
+    const bool shmInput = inputEnv && std::string(inputEnv) == "shm";
+
     ScreenRecorder rec;
-    ok = rec.start([&](const uint8_t *pixels, int width, int height,
+    ShmFrameSource shmSrc;
+    auto onFrame = [&](const uint8_t *pixels, int width, int height,
                        int stride, uint32_t /*drmFormat*/, int transform) {
         int64_t t = nowUs();
         if (t - lastQueuedUs.load() < frameIntervalUs) {
@@ -237,10 +245,13 @@ int main(int argc, char **argv)
         // droidmedia takes microseconds in (MediaCodec convention) but
         // reports nanoseconds out — the output path divides by 1000.
         enc.queueFrame(frame, size, t);
-    });
+    };
+    ok = shmInput ? shmSrc.start(opt.fps, onFrame) : rec.start(onFrame);
     if (!ok) {
-        fprintf(stderr, "imira-castd: cannot start screen recorder "
-                        "(WAYLAND_DISPLAY/XDG_RUNTIME_DIR correct?)\n");
+        fprintf(stderr, "imira-castd: cannot start %s\n",
+                shmInput ? "comp frame source"
+                         : "screen recorder "
+                           "(WAYLAND_DISPLAY/XDG_RUNTIME_DIR correct?)");
         enc.stop();
         return 1;
     }
@@ -254,7 +265,7 @@ int main(int argc, char **argv)
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
         int64_t t = nowUs();
-        if (t - lastQueuedUs.load() > 500000)
+        if (!shmInput && t - lastQueuedUs.load() > 500000)
             rec.requestRepaint();
         if (FILE *f = fopen("/tmp/imira-rotate", "r")) {
             int r = 0;
@@ -293,7 +304,10 @@ int main(int argc, char **argv)
         }
     }
 
-    rec.stop();
+    if (shmInput)
+        shmSrc.stop();
+    else
+        rec.stop();
     enc.stop();
     // Tears down the silence sink so parked media streams return to the
     // phone speaker the moment the cast ends.
