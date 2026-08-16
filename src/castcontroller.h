@@ -29,6 +29,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QHash>
 #include <QTimer>
 #include <QVariantList>
 
@@ -56,6 +57,14 @@ class CastController : public QObject
     // false = mirror the phone screen (default); true = convergence: the TV
     // becomes its own virtual screen (imira-comp). Applies to the NEXT cast.
     Q_PROPERTY(bool convergence READ convergence NOTIFY statusChanged)
+    // Convergence monitor: window titles currently on the TV, and the CPU
+    // load (percent, all cores) of the second instance — compositor,
+    // encoder and the TV apps together.
+    Q_PROPERTY(QStringList tvWindows READ tvWindows NOTIFY statusChanged)
+    Q_PROPERTY(int tvLoad READ tvLoad NOTIFY statusChanged)
+    // htop, scoped to convergence: per-process {name, cpu} of compositor,
+    // encoder and every TV app, sorted by load.
+    Q_PROPERTY(QVariantList tvProcs READ tvProcs NOTIFY statusChanged)
 
 public:
     explicit CastController(QObject *parent = nullptr);
@@ -82,10 +91,24 @@ public:
     Q_INVOKABLE void setAudioOffset(int ms);
     Q_INVOKABLE void setConvergence(bool on);
 
+    // The TV dock's app selection. installedApps lists every launcher app
+    // as {id, name, icon}; tvApps/setTvApps read and write the selection
+    // (~/.config/imira/tv-apps) that the compositor reloads live.
+    // Saves the current TV frame as a PNG in Pictures/Screenshots and
+    // returns the file name ("" if there is no frame).
+    Q_INVOKABLE QString saveTvScreenshot() const;
+
+    Q_INVOKABLE QVariantList installedApps() const;
+    Q_INVOKABLE QStringList tvApps() const;
+    Q_INVOKABLE void setTvApps(const QStringList &ids);
+
     QString rotationMode() const { return m_rotationMode; }
     bool fullHd() const { return m_fullHd; }
     int audioOffsetMs() const { return m_audioOffsetMs; }
     bool convergence() const { return m_convergence; }
+    QStringList tvWindows() const { return m_tvWindows; }
+    int tvLoad() const { return m_tvLoad; }
+    QVariantList tvProcs() const { return m_tvProcs; }
 
 signals:
     void statusChanged();
@@ -93,6 +116,9 @@ signals:
 
 private slots:
     void poll();
+
+private:
+    void updateTvMonitor();
 
 private:
     QTimer  m_timer;
@@ -108,6 +134,11 @@ private:
     bool    m_fullHd = true;
     int     m_audioOffsetMs = 0;
     bool    m_convergence = false;
+    QStringList m_tvWindows;
+    int     m_tvLoad = 0;
+    QVariantList m_tvProcs;
+    QHash<qint64, qulonglong> m_lastJiffies;
+    qint64  m_lastJiffiesMs = 0;
 };
 
 #endif // CASTCONTROLLER_H

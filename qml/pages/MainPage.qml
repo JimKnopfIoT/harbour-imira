@@ -13,6 +13,12 @@ import Sailfish.Silica 1.0
 Page {
     id: page
 
+    // Swipe left: the TV view with the convergence load monitor.
+    onStatusChanged: {
+        if (status === PageStatus.Active && !forwardNavigation)
+            pageStack.pushAttached(Qt.resolvedUrl("TvViewPage.qml"))
+    }
+
     // "running" = a cast is underway (scanning is not casting).
     readonly property bool running: cast.state === "starting"
                                  || cast.state === "connecting"
@@ -50,6 +56,10 @@ Page {
             MenuItem {
                 text: qsTr("About")
                 onClicked: pageStack.push(Qt.resolvedUrl("AboutPage.qml"))
+            }
+            MenuItem {
+                text: qsTr("TV apps")
+                onClicked: pageStack.push(Qt.resolvedUrl("TvAppsPage.qml"))
             }
             MenuItem {
                 text: qsTr("Scan for devices")
@@ -158,6 +168,25 @@ Page {
                 automaticCheck: false
                 checked: cast.fullHd
                 onClicked: cast.setFullHd(!checked)
+            }
+
+            // --- convergence monitor --------------------------------------
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                visible: cast.convergence && page.running
+                         && cast.tvWindows.length > 0
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.secondaryHighlightColor
+                //: %1 is a comma-separated list of app window titles
+                text: qsTr("On the TV: %1").arg(cast.tvWindows.join(", "))
+            }
+            DetailItem {
+                visible: cast.convergence && page.running
+                label: qsTr("TV load (CPU)")
+                //: %1 is a CPU percentage
+                value: qsTr("%1 %").arg(cast.tvLoad)
             }
 
             TextSwitch {

@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.9.0
+Version:    0.10.0
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -134,7 +134,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 # setgid privileged: the Lipstick recorder socket is only reachable for the
 # privileged group; without the 2 bit the daemon records nothing.
 %attr(2755,root,privileged) /usr/libexec/imira/imira-castd
-%attr(0755,root,root) /usr/libexec/imira/imira-comp
+%attr(2755,root,privileged) /usr/libexec/imira/imira-comp
 %attr(0755,root,root) /usr/libexec/imira/imira-session.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-connect.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-wfd-proto.py
@@ -146,6 +146,14 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Aug 16 2026 harbour-imira contributors 0.10.0-1
+- Convergence desktop: window management (move, resize grip, minimize,
+  maximize, close, stacking, opaque backdrops), dock as task bar with
+  live-reloaded per-user app selection, external keyboard/mouse with
+  Bluetooth-reconnect resilience and correct keycodes, per-app content
+  orientation compensation, no on-screen keyboard on the TV, TV view page
+  on the phone (opt-in live preview, per-process convergence load monitor),
+  pixel-perfect TV screenshots via Print key or the app.
 * Sat Aug 15 2026 harbour-imira contributors 0.1.0-1
 - Initial skeleton: Silica UI (status page, cover, German translation),
   flag-file CastController, packaging of the externally built casting

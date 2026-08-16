@@ -23,11 +23,13 @@ DEFINES += APP_VERSION=\\\"$$VERSION\\\"
 DEFINES += APP_RELEASE=\\\"$$RELEASE\\\"
 
 HEADERS += \
-    src/castcontroller.h
+    src/castcontroller.h \
+    src/tvpreview.h
 
 SOURCES += \
     src/harbour-imira.cpp \
-    src/castcontroller.cpp
+    src/castcontroller.cpp \
+    src/tvpreview.cpp
 
 # Icons: four sizes under icons/<size>/harbour-imira.png; sailfishapp.prf
 # installs them to /usr/share/icons/hicolor/<size>/apps/.
@@ -47,6 +49,8 @@ DISTFILES += \
     qml/cover/CoverPage.qml \
     qml/pages/MainPage.qml \
     qml/pages/AboutPage.qml \
+    qml/pages/TvAppsPage.qml \
+    qml/pages/TvViewPage.qml \
     rpm/harbour-imira.spec \
     harbour-imira.desktop \
     translations/*.ts

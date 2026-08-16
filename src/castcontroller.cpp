@@ -4,6 +4,11 @@
 */
 #include "castcontroller.h"
 
+#include <algorithm>
+
+#include <QDateTime>
+#include <QDir>
+#include <QImage>
 #include <QFile>
 #include <QStringList>
 
@@ -163,10 +168,219 @@ void CastController::setConvergence(bool on)
     }
 }
 
+namespace {
+QString tvAppsPath()
+{
+    return QDir::homePath() + QStringLiteral("/.config/imira/tv-apps");
+}
+} // namespace
+
+QString CastController::saveTvScreenshot() const
+{
+    QFile f(QStringLiteral("/dev/shm/imira-comp-fb"));
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    const QByteArray data = f.readAll();
+    if (data.size() < 16)
+        return QString();
+    const quint32 *hdr = reinterpret_cast<const quint32 *>(data.constData());
+    const quint32 w = hdr[2], h = hdr[3];
+    if (hdr[0] != 0x31464349u || w == 0
+            || (quint32)data.size() < 16 + w * h * 4)
+        return QString();
+    const QString dir = QDir::homePath()
+                        + QStringLiteral("/Pictures/Screenshots");
+    QDir().mkpath(dir);
+    const QString name = QStringLiteral("TV_%1.png").arg(
+        QDateTime::currentDateTime().toString(
+            QStringLiteral("yyyyMMdd_hhmmss")));
+    QImage img(reinterpret_cast<const uchar *>(data.constData()) + 16,
+               w, h, w * 4, QImage::Format_RGBA8888);
+    // The compositor's GL readback is bottom-up.
+    if (!img.mirrored(false, true).save(dir + QLatin1Char('/') + name))
+        return QString();
+    return name;
+}
+
+QVariantList CastController::installedApps() const
+{
+    QVariantList result;
+    const QDir dir(QStringLiteral("/usr/share/applications"));
+    const QStringList files = dir.entryList(
+        QStringList() << QStringLiteral("*.desktop"), QDir::Files);
+    for (const QString &fn : files) {
+        QFile f(dir.filePath(fn));
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        QString name, icon;
+        bool hidden = false;
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine()).trimmed();
+            if (line.startsWith(QLatin1String("Name=")) && name.isEmpty())
+                name = line.mid(5);
+            else if (line.startsWith(QLatin1String("Icon=")))
+                icon = line.mid(5);
+            else if (line == QLatin1String("NoDisplay=true")
+                     || line == QLatin1String("Hidden=true"))
+                hidden = true;
+        }
+        if (hidden || name.isEmpty() || icon.isEmpty())
+            continue;
+        QVariantMap app;
+        app.insert(QStringLiteral("id"), fn.left(fn.length() - 8));
+        app.insert(QStringLiteral("name"), name);
+        app.insert(QStringLiteral("icon"), icon);
+        result.append(app);
+    }
+    // Alphabetical by display name keeps the page scannable.
+    std::sort(result.begin(), result.end(),
+              [](const QVariant &a, const QVariant &b) {
+                  return a.toMap().value(QStringLiteral("name")).toString()
+                             .compare(b.toMap()
+                                          .value(QStringLiteral("name"))
+                                          .toString(),
+                                      Qt::CaseInsensitive) < 0;
+              });
+    return result;
+}
+
+QStringList CastController::tvApps() const
+{
+    // The user's own selection, or the system default list as a starting
+    // point (same fallback order the compositor uses).
+    QFile f(tvAppsPath());
+    if (!f.exists())
+        f.setFileName(QStringLiteral("/etc/imira/tv-apps"));
+    QStringList ids;
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine()).trimmed();
+            if (!line.isEmpty() && !line.startsWith(QLatin1Char('#')))
+                ids << line;
+        }
+    }
+    return ids;
+}
+
+void CastController::setTvApps(const QStringList &ids)
+{
+    QDir().mkpath(QDir::homePath() + QStringLiteral("/.config/imira"));
+    QFile f(tvAppsPath());
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return;
+    f.write("# Apps in der TV-Leiste (von der Imira-App verwaltet)\n");
+    for (const QString &id : ids)
+        f.write(id.toUtf8() + "\n");
+}
+
+namespace {
+// utime+stime of a process in clock ticks, 0 if it is gone.
+qulonglong jiffiesOf(qint64 pid)
+{
+    QFile f(QStringLiteral("/proc/%1/stat").arg(pid));
+    if (!f.open(QIODevice::ReadOnly))
+        return 0;
+    const QByteArray stat = f.readAll();
+    // Fields 14+15, counted after the parenthesized comm (which may
+    // contain spaces).
+    const int close = stat.lastIndexOf(')');
+    const QList<QByteArray> fields = stat.mid(close + 2).split(' ');
+    if (fields.count() < 13)
+        return 0;
+    return fields.at(11).toULongLong() + fields.at(12).toULongLong();
+}
+
+// PIDs whose comm matches (kernel-truncated names).
+QList<qint64> pidsOf(const QByteArray &comm)
+{
+    QList<qint64> result;
+    QDir proc(QStringLiteral("/proc"));
+    for (const QString &entry : proc.entryList(QDir::Dirs)) {
+        if (!entry.at(0).isDigit())
+            continue;
+        QFile f(QStringLiteral("/proc/") + entry + QStringLiteral("/comm"));
+        if (f.open(QIODevice::ReadOnly) && f.readAll().trimmed() == comm)
+            result << entry.toLongLong();
+    }
+    return result;
+}
+} // namespace
+
+void CastController::updateTvMonitor()
+{
+    QStringList windows;
+    QList<QPair<qint64, QString>> procs; // pid, display name
+    QFile f(QStringLiteral("/tmp/imira-tv-status"));
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine());
+            const QStringList parts = line.split(QLatin1Char('\t'));
+            if (parts.count() < 3)
+                continue;
+            QString title = parts.at(1).trimmed();
+            if (title.isEmpty())
+                title = QStringLiteral("App");
+            procs.append({ parts.at(0).toLongLong(), title });
+            if (parts.at(2).trimmed() == QLatin1String("1"))
+                title += QStringLiteral(" (min.)");
+            windows << title;
+        }
+    }
+    // The second instance's own machinery counts toward the load too.
+    for (qint64 pid : pidsOf(QByteArrayLiteral("imira-comp")))
+        procs.append({ pid, QStringLiteral("Compositor") });
+    for (qint64 pid : pidsOf(QByteArrayLiteral("imira-castd")))
+        procs.append({ pid, QStringLiteral("Encoder") });
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 dt = now - m_lastJiffiesMs;
+    qulonglong deltaSum = 0;
+    QHash<qint64, qulonglong> current;
+    QVariantList list;
+    for (const auto &proc : procs) {
+        const qulonglong j = jiffiesOf(proc.first);
+        if (j == 0)
+            continue;
+        current.insert(proc.first, j);
+        int cpu = 0;
+        if (m_lastJiffies.contains(proc.first) && m_lastJiffiesMs > 0
+                && dt > 0) {
+            const qulonglong delta = j - m_lastJiffies.value(proc.first);
+            deltaSum += delta;
+            // Ticks are 100/s: percent (all cores) over the poll interval.
+            cpu = (int)(delta * 1000ull / (qulonglong)dt);
+        }
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), proc.second);
+        entry.insert(QStringLiteral("cpu"), cpu);
+        list.append(entry);
+    }
+    std::sort(list.begin(), list.end(),
+              [](const QVariant &a, const QVariant &b) {
+                  return a.toMap().value(QStringLiteral("cpu")).toInt()
+                         > b.toMap().value(QStringLiteral("cpu")).toInt();
+              });
+    int load = 0;
+    if (m_lastJiffiesMs > 0 && dt > 0)
+        load = (int)(deltaSum * 1000ull / (qulonglong)dt);
+    m_lastJiffies = current;
+    m_lastJiffiesMs = now;
+
+    if (windows != m_tvWindows || load != m_tvLoad || list != m_tvProcs) {
+        m_tvWindows = windows;
+        m_tvLoad = load;
+        m_tvProcs = list;
+        emit statusChanged();
+    }
+}
+
 void CastController::poll()
 {
     // Heartbeat: proves to the service that the app is still alive.
     touchFlag(kAlivePath);
+
+    if (m_convergence)
+        updateTvMonitor();
 
     QString state = QStringLiteral("idle");
     QString iface;

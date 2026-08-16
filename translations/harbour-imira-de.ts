@@ -68,6 +68,24 @@
         <translation>Aus: 720p — flüssiger bei schwachem Funk. Schaltet live während der Übertragung um.</translation>
     </message>
     <message>
+        <source>TV apps</source>
+        <translation>TV-Apps</translation>
+    </message>
+    <message>
+        <source>On the TV: %1</source>
+        <extracomment>%1 is a comma-separated list of app window titles</extracomment>
+        <translation>Auf dem TV: %1</translation>
+    </message>
+    <message>
+        <source>TV load (CPU)</source>
+        <translation>TV-Last (CPU)</translation>
+    </message>
+    <message>
+        <source>%1 %</source>
+        <extracomment>%1 is a CPU percentage</extracomment>
+        <translation>%1 %</translation>
+    </message>
+    <message>
         <source>Convergence (experimental)</source>
         <translation>Convergence (experimentell)</translation>
     </message>
@@ -204,6 +222,70 @@
     <message>
         <source>Connection attempts</source>
         <translation>Verbindungsversuche</translation>
+    </message>
+</context>
+<context>
+    <name>TvAppsPage</name>
+    <message>
+        <source>TV apps</source>
+        <translation>TV-Apps</translation>
+    </message>
+    <message>
+        <source>These apps appear in the dock on the TV. Changes apply to a running cast within a few seconds.</source>
+        <translation>Diese Apps erscheinen in der Leiste auf dem TV. Änderungen gelten bei laufendem Cast innerhalb weniger Sekunden.</translation>
+    </message>
+</context>
+<context>
+    <name>TvViewPage</name>
+    <message>
+        <source>TV view</source>
+        <translation>TV-Ansicht</translation>
+    </message>
+    <message>
+        <source>Live preview</source>
+        <translation>Live-Vorschau</translation>
+    </message>
+    <message>
+        <source>Shows the TV picture here, updated twice per second.</source>
+        <translation>Zeigt hier das TV-Bild, zweimal pro Sekunde aktualisiert.</translation>
+    </message>
+    <message>
+        <source>Save TV screenshot</source>
+        <translation>TV-Screenshot speichern</translation>
+    </message>
+    <message>
+        <source>Saved: %1</source>
+        <extracomment>%1 is a file name</extracomment>
+        <translation>Gespeichert: %1</translation>
+    </message>
+    <message>
+        <source>No TV picture to save</source>
+        <translation>Kein TV-Bild zum Speichern</translation>
+    </message>
+    <message>
+        <source>No picture — is a convergence cast running?</source>
+        <translation>Kein Bild — läuft ein Convergence-Cast?</translation>
+    </message>
+    <message>
+        <source>Convergence is off</source>
+        <translation>Convergence ist ausgeschaltet</translation>
+    </message>
+    <message>
+        <source>Convergence load</source>
+        <translation>Convergence-Auslastung</translation>
+    </message>
+    <message>
+        <source>%1 %</source>
+        <extracomment>%1 is a CPU percentage</extracomment>
+        <translation>%1 %</translation>
+    </message>
+    <message>
+        <source>Total</source>
+        <translation>Gesamt</translation>
+    </message>
+    <message>
+        <source>100 % equals one fully used CPU core; the phone has eight.</source>
+        <translation>100 % entsprechen einem voll genutzten CPU-Kern; das Phone hat acht.</translation>
     </message>
 </context>
 </TS>
