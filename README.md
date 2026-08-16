@@ -81,10 +81,13 @@ phones did real convergence: plug in a keyboard and a mouse, put the screen
 on a TV, and the phone turned into a desktop with proper, dockable windows.
 The **Meizu Pro 5**, which shipped with Ubuntu Touch, was the author's
 gateway drug into Linux phones — and that experience never quite let go.
-(It is no coincidence that Imira's Wi-Fi Direct code descends from
+When Canonical pulled the plug on it in 2017, that felt like a real loss:
+the most convincing answer yet to "why would a phone be a computer?" simply
+stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
 aethercast, Ubuntu Touch's display casting stack.)
 
-Sailfish OS never got that. Mirroring the screen — this repository — is
+Sailfish OS never got that. This project is the attempt to bring something
+like it to a Sailfish phone. Mirroring the screen — this repository — is
 step one. The goal is step two: keyboard and mouse on the phone, the TV as
 a real workspace with dockable windows. Convergence on Sailfish.
 
