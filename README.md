@@ -13,6 +13,18 @@ Sailfish OS. Developed and tested on the **Xperia 10 III** (Sailfish OS
 5.0.0.62) against a Microsoft Wireless Display Adapter V2 and an LG webOS TV
 (native Miracast), using the phone's internal Wi-Fi chip.
 
+**This is the convergence desktop running on a TV** — Sailfish apps as
+windows, a dock, a mouse cursor, all driven by the phone (screenshot taken
+with the built-in Print-key capture, pixel for pixel what the TV shows):
+
+<img src="screenshots/tv-desktop.png" width="100%" alt="The convergence desktop on the TV: app windows, dock, mouse cursor">
+
+<p>
+<img src="screenshots/phone-main.png" width="240" alt="Phone app: cast controls with the convergence switch">
+<img src="screenshots/phone-tv-view.png" width="240" alt="Phone app: live TV view with the convergence load monitor">
+<img src="screenshots/phone-tv-apps.png" width="240" alt="Phone app: choosing which apps appear in the TV dock">
+</p>
+
 ## Features
 
 - **Video**: screen capture via the Lipstick recorder interface, hardware
