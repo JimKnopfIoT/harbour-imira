@@ -79,9 +79,10 @@ class Compositor;
 class DockItem : public QQuickPaintedItem
 {
 public:
-    static constexpr int kHeight = 72;
+    static constexpr int kHeight = 48;
 
     struct App {
+        QString id;
         QString name;
         QString exec;
         QImage icon;
@@ -157,7 +158,7 @@ public:
                 p->setPen(Qt::NoPen);
                 p->setBrush(QColor(60, 200, 255));
                 p->drawEllipse(QPointF(app.rect.center().x(),
-                                       height() - 5), 3, 3);
+                                       height() - 3), 2.5, 2.5);
             }
         }
     }
@@ -188,17 +189,18 @@ private:
                 << QStringLiteral("sailfish-browser")
                 << QStringLiteral("jolla-gallery");
 
-        qreal x = 16;
+        qreal x = 12;
         for (const QString &id : ids) {
             QString name, iconName, exec;
             if (!parseDesktop(id, &name, &iconName, &exec))
                 continue;
             App app;
+            app.id = id;
             app.name = name;
             app.exec = exec;
             app.icon = loadIcon(iconName);
-            app.rect = QRectF(x, (kHeight - 56) / 2.0, 56, 56);
-            x += 56 + 16;
+            app.rect = QRectF(x, (kHeight - 40) / 2.0, 40, 40);
+            x += 40 + 12;
             m_apps.append(app);
         }
         fprintf(stderr, "imira-comp: dock with %d apps\n", m_apps.count());
@@ -287,6 +289,37 @@ private:
         return false;
     }
 
+    // Per-app launch environment for the TV. Some apps need desktop-mode
+    // settings without touching their phone behaviour — fingerterm e.g.
+    // draws its own on-screen keyboard unless its config says otherwise,
+    // so it gets a separate config tree via XDG_CONFIG_HOME. Config:
+    // ~/.config/imira/tv-app-env (fallback /etc/imira/tv-app-env), one
+    // line per app: "<desktop-id> VAR=value [VAR=value …]".
+    QString extraEnvFor(const QString &id) const
+    {
+        QFile f(QDir::homePath()
+                + QStringLiteral("/.config/imira/tv-app-env"));
+        if (!f.exists())
+            f.setFileName(QStringLiteral("/etc/imira/tv-app-env"));
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            return QString();
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine()).trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+                continue;
+            const QStringList parts =
+                line.split(QLatin1Char(' '), QString::SkipEmptyParts);
+            if (parts.value(0) != id)
+                continue;
+            QStringList env;
+            for (int i = 1; i < parts.count(); ++i)
+                if (parts.at(i).contains(QLatin1Char('=')))
+                    env << parts.at(i);
+            return env.join(QLatin1Char(' '));
+        }
+        return QString();
+    }
+
     void launch(const App &app)
     {
         if (alreadyRunning(app.exec)) {
@@ -299,11 +332,15 @@ private:
         // Env that a TV app needs; everything else is inherited from us.
         // QT_IM_MODULE=none: a desktop has a real keyboard — no Maliit
         // on-screen keyboard popping over the TV windows.
-        const QString cmd = QStringLiteral(
+        QString cmd = QStringLiteral(
             "QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY=imira-comp-0 "
             "QT_IM_MODULE=none "
             "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/100000/dbus/"
-            "user_bus_socket exec ") + app.exec;
+            "user_bus_socket ");
+        const QString extra = extraEnvFor(app.id);
+        if (!extra.isEmpty())
+            cmd += extra + QLatin1Char(' ');
+        cmd += QStringLiteral("exec ") + app.exec;
         QProcess::startDetached(QStringLiteral("/bin/sh"),
                                 QStringList() << QStringLiteral("-c") << cmd);
     }
@@ -334,6 +371,8 @@ public:
     void syncToSurface()
     {
         const QSize s = m_item->surface()->size();
+        if (s.isEmpty())
+            return;
         m_item->setSize(QSizeF(s));
         // Fixed-orientation apps (games!) draw rotated into their buffer
         // and announce it; the compositor has to undo that on screen.
@@ -342,30 +381,86 @@ public:
         // portrait buffer (rotate!), while a Silica app in our landscape
         // window lays itself out correctly and merely reports its internal
         // orientation state (leave it alone — the 3DM file dialog came out
-        // upside down when we rotated regardless).
-        const bool portraitBuf = s.height() > s.width();
-        int rot = 0;
-        switch (m_item->surface()->contentOrientation()) {
-        case Qt::LandscapeOrientation:         rot = portraitBuf ? 90 : 0;  break;
-        case Qt::InvertedPortraitOrientation:  rot = 180; break;
-        case Qt::InvertedLandscapeOrientation: rot = portraitBuf ? 270 : 0; break;
-        default:                               rot = 0;   break;
+        // upside down when we rotated regardless). The heuristic still
+        // guesses wrong for some dialogs, so the title bar has a rotate
+        // button: rotOverride wins over the guess.
+        int rot = rotOverride;
+        if (rot < 0) {
+            const bool portraitBuf = s.height() > s.width();
+            switch (m_item->surface()->contentOrientation()) {
+            case Qt::LandscapeOrientation:         rot = portraitBuf ? 90 : 0;  break;
+            case Qt::InvertedPortraitOrientation:  rot = 180; break;
+            case Qt::InvertedLandscapeOrientation: rot = portraitBuf ? 270 : 0; break;
+            default:                               rot = 0;   break;
+            }
         }
-        fprintf(stderr,
-                "imira-comp: sync '%s' %dx%d orient=%d rot=%d yInv=%d\n",
-                qPrintable(m_item->surface()->title()), s.width(),
-                s.height(), (int)m_item->surface()->contentOrientation(),
-                rot, m_item->isYInverted());
         m_item->setTransformOrigin(QQuickItem::Center);
         m_item->setRotation(rot);
         const bool swap = (rot == 90 || rot == 270);
-        const qreal cw = swap ? s.height() : s.width();
-        const qreal ch = swap ? s.width() : s.height();
-        setSize(QSizeF(cw, ch + kTitle));
-        // Center the (possibly rotated) buffer in the content area.
+        const qreal bw = swap ? s.height() : s.width();
+        const qreal bh = swap ? s.width() : s.height();
+        // The frame follows the user, not the client: userSize (set by
+        // resize drag / maximize / clamping) fixes the frame, and the
+        // (rotated) buffer is fitted into it aspect-preserving. Clients
+        // that honour our size requests land at scale 1; clients with a
+        // fixed surface (TilEm's calculator!) get scaled, never cropped.
+        if (userSize.isEmpty()) {
+            setSize(QSizeF(bw, bh + kTitle));
+        } else if (zoomMode) {
+            // Zoom mode: the frame snaps to the buffer's aspect ratio —
+            // no letterbox bars, the content IS the window.
+            const qreal s = qMin(userSize.width() / bw,
+                                 (userSize.height() - kTitle) / bh);
+            setSize(QSizeF(bw * s, bh * s + kTitle));
+        } else {
+            setSize(userSize);
+        }
+        const qreal cw = width();
+        const qreal ch = height() - kTitle;
+        const qreal scale = qMin(cw / bw, ch / bh);
+        m_item->setScale(scale);
+        // Scale and rotation pivot on the item's center: place the raw
+        // buffer so its center sits at the content-area center.
         m_item->setPosition(QPointF((cw - s.width()) / 2.0,
                                     kTitle + (ch - s.height()) / 2.0));
+        fprintf(stderr,
+                "imira-comp: sync '%s' %dx%d orient=%d rot=%d scale=%.2f yInv=%d\n",
+                qPrintable(m_item->surface()->title()), s.width(),
+                s.height(), (int)m_item->surface()->contentOrientation(),
+                rot, scale, m_item->isYInverted());
         update();
+    }
+
+    // One click = the window content turns 90° clockwise — the escape
+    // hatch for windows where the orientation heuristic guesses wrong
+    // (3DM viewer's file dialog). Four clicks come full circle.
+    void cycleRotation()
+    {
+        rotOverride = ((rotOverride < 0 ? (int)m_item->rotation()
+                                        : rotOverride) + 90) % 360;
+        syncToSurface();
+    }
+
+    // Zoom mode: for apps that break when asked to relayout (games lay
+    // out for the phone screen and crop; TilEm letterboxes internally —
+    // double bars). On: send the app back to its phone-native geometry
+    // once, then never ask again — the compositor only zooms, and the
+    // frame follows the content's aspect. Off: ask it to relayout into
+    // the current frame (fit mode, the default).
+    void toggleZoom()
+    {
+        zoomMode = !zoomMode;
+        if (zoomMode) {
+            // Respect the app's orientation: a landscape-only game
+            // (Machines vs. Machines) must not be forced into portrait.
+            const QSize s = m_item->surface()->size();
+            m_item->surface()->requestSize(s.width() > s.height()
+                                               ? QSize(960, 540)
+                                               : QSize(540, 960));
+        } else
+            m_item->surface()->requestSize(
+                QSize((int)width(), (int)height() - kTitle));
+        syncToSurface();
     }
 
     void setTitle(const QString &t) { m_title = t; update(); }
@@ -389,14 +484,43 @@ public:
     {
         return QRectF(width() - 3 * kTitle, 0, kTitle, kTitle).contains(p);
     }
-    bool inResize(const QPointF &p) const
+    bool inRotate(const QPointF &p) const
     {
-        return QRectF(width() - 26, height() - 26, 26, 26).contains(p);
+        return QRectF(width() - 4 * kTitle, 0, kTitle, kTitle).contains(p);
+    }
+    bool inZoom(const QPointF &p) const
+    {
+        return QRectF(width() - 5 * kTitle, 0, kTitle, kTitle).contains(p);
+    }
+    // Resizable from every non-title edge, like a real desktop — the old
+    // corner-only grip was invisible on dark content (TilEm) and tiny on a
+    // TV. Returns the edge mask under p; 0 = not a resize zone.
+    enum ResizeEdge { EdgeLeft = 1, EdgeRight = 2, EdgeBottom = 4,
+                      EdgeTop = 8 };
+    int resizeEdgesAt(const QPointF &p) const
+    {
+        // Top-left corner of the title bar: diagonal resize (the right
+        // corner belongs to the buttons).
+        if (QRectF(0, 0, 26, kTitle).contains(p))
+            return EdgeLeft | EdgeTop;
+        if (p.y() < kTitle)
+            return 0;           // rest of the title bar: move & buttons
+        int e = 0;
+        const qreal band = 12;
+        if (p.x() < band)                 e |= EdgeLeft;
+        if (p.x() > width() - band)       e |= EdgeRight;
+        if (p.y() > height() - band)      e |= EdgeBottom;
+        if (QRectF(width() - 26, height() - 26, 26, 26).contains(p))
+            e |= EdgeRight | EdgeBottom;  // the classic corner grip
+        return e;
     }
 
     bool minimized = false;
     bool maximized = false;
     QRectF restoreGeometry;
+    QSizeF userSize;        // empty = the frame follows the buffer
+    int rotOverride = -1;   // -1 = heuristic, else 0/90/180/270
+    bool zoomMode = false;  // true = never ask the app to relayout
 
     void paint(QPainter *p) override
     {
@@ -414,8 +538,27 @@ public:
         QFont f = p->font();
         f.setPixelSize(16);
         p->setFont(f);
-        p->drawText(QRectF(12, 0, width() - 3 * kTitle - 16, kTitle),
+        p->drawText(QRectF(32, 0, width() - 5 * kTitle - 36, kTitle),
                     Qt::AlignVCenter | Qt::AlignLeft, m_title);
+        // Zoom toggle: a magnifier; filled when zoom mode is on
+        const qreal zx = width() - 5 * kTitle;
+        p->setPen(QPen(QColor(255, 255, 255, 200), 2));
+        p->setBrush(zoomMode ? QBrush(QColor(255, 255, 255, 120))
+                             : Qt::NoBrush);
+        p->drawEllipse(QPointF(zx + 14, 14), 6, 6);
+        p->drawLine(QPointF(zx + 18.5, 18.5),
+                    QPointF(zx + kTitle - 8, kTitle - 8));
+        // Top-left resize grip: diagonals mirroring the bottom-right one
+        p->setPen(QPen(QColor(255, 255, 255, 220), 2));
+        p->drawLine(QPointF(4, 20), QPointF(20, 4));
+        p->drawLine(QPointF(4, 14), QPointF(14, 4));
+        p->drawLine(QPointF(4, 8), QPointF(8, 4));
+        // Rotate: an open circle (per-window rotation override)
+        const qreal rx = width() - 4 * kTitle;
+        p->setPen(QPen(QColor(255, 255, 255, 200), 2));
+        p->setBrush(Qt::NoBrush);
+        p->drawArc(QRectF(rx + 9, 9, kTitle - 18, kTitle - 18),
+                   45 * 16, 270 * 16);
         // Minimize: a dash
         const qreal mnx = width() - 3 * kTitle;
         p->setPen(QPen(QColor(255, 255, 255, 200), 2));
@@ -430,8 +573,22 @@ public:
         const qreal cx = width() - kTitle;
         p->drawLine(QPointF(cx + 10, 10), QPointF(cx + kTitle - 10, kTitle - 10));
         p->drawLine(QPointF(cx + kTitle - 10, 10), QPointF(cx + 10, kTitle - 10));
-        // Resize grip: two diagonals in the bottom-right corner
-        p->setPen(QPen(QColor(255, 255, 255, 140), 2));
+        // Window border: makes the grabbable edges visible at TV distance.
+        p->setPen(QPen(QColor(255, 255, 255, 110), 1));
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(QRectF(0.5, 0.5, width() - 1, height() - 1));
+        // Little pills at the edge centers: the resize zones, made visible.
+        p->setPen(Qt::NoPen);
+        p->setBrush(QColor(255, 255, 255, 90));
+        p->drawRoundedRect(QRectF(2, height() / 2 - 18, 4, 36), 2, 2);
+        p->drawRoundedRect(
+            QRectF(width() - 6, height() / 2 - 18, 4, 36), 2, 2);
+        p->drawRoundedRect(
+            QRectF(width() / 2 - 18, height() - 6, 36, 4), 2, 2);
+        // Resize grip: three diagonals in the bottom-right corner
+        p->setPen(QPen(QColor(255, 255, 255, 220), 2));
+        p->drawLine(QPointF(width() - 20, height() - 4),
+                    QPointF(width() - 4, height() - 20));
         p->drawLine(QPointF(width() - 14, height() - 4),
                     QPointF(width() - 4, height() - 14));
         p->drawLine(QPointF(width() - 8, height() - 4),
@@ -530,6 +687,12 @@ public:
                              [this, chrome]() { removeChrome(chrome); });
             QObject::connect(surface, &QWaylandSurface::surfaceDestroyed,
                              [this, chrome]() { removeChrome(chrome); });
+            // Belt and braces: whatever path tears the surface object down,
+            // the chrome must never outlive it.
+            QObject::connect(surface, &QObject::destroyed,
+                             [this, chrome](QObject *) {
+                                 removeChrome(chrome);
+                             });
             fprintf(stderr,
                     "imira-comp: surface mapped %dx%d (%s) yInverted=%d\n",
                     surface->size().width(), surface->size().height(),
@@ -596,10 +759,17 @@ public:
         const qreal wsW = m_width;
         const qreal wsH = m_height - DockItem::kHeight;
         if (chrome->width() > wsW || chrome->height() > wsH) {
-            chrome->surfaceItem()->surface()->requestSize(
-                QSize((int)qMin(chrome->width(), wsW),
-                      (int)qMin(chrome->height(), wsH)
-                          - WindowChrome::kTitle));
+            // Fix the frame to the workspace right away — a client that
+            // ignores the shrink request gets scaled into it instead of
+            // hanging over the screen edge.
+            chrome->userSize = QSizeF(qMin(chrome->width(), wsW),
+                                      qMin(chrome->height(), wsH));
+            if (!chrome->zoomMode)
+                chrome->surfaceItem()->surface()->requestSize(
+                    QSize((int)qMin(chrome->width(), wsW),
+                          (int)qMin(chrome->height(), wsH)
+                              - WindowChrome::kTitle));
+            chrome->syncToSurface();
         }
         QPointF p = chrome->position();
         p.setX(qBound(0.0, p.x(), qMax(0.0, wsW - chrome->width())));
@@ -647,36 +817,61 @@ public:
                 QRectF(chrome->position(),
                        QSizeF(chrome->width(), chrome->height()));
             chrome->setPosition(QPointF(0, 0));
-            surface->requestSize(QSize(
-                m_width, m_height - DockItem::kHeight - WindowChrome::kTitle));
+            chrome->userSize =
+                QSizeF(m_width, m_height - DockItem::kHeight);
+            if (!chrome->zoomMode)
+                surface->requestSize(QSize(
+                    m_width,
+                    m_height - DockItem::kHeight - WindowChrome::kTitle));
             chrome->maximized = true;
         } else {
             chrome->setPosition(chrome->restoreGeometry.topLeft());
-            surface->requestSize(QSize(
-                (int)chrome->restoreGeometry.width(),
-                (int)chrome->restoreGeometry.height() - WindowChrome::kTitle));
+            chrome->userSize = chrome->restoreGeometry.size();
+            if (!chrome->zoomMode)
+                surface->requestSize(QSize(
+                    (int)chrome->restoreGeometry.width(),
+                    (int)chrome->restoreGeometry.height()
+                        - WindowChrome::kTitle));
             chrome->maximized = false;
         }
+        chrome->syncToSurface();
     }
 
     void closeWindow(WindowChrome *chrome)
     {
         // wl_shell has no polite close request; SIGTERM is what the apps
-        // handle cleanly anyway.
+        // handle cleanly anyway. If the client process is already gone
+        // (zombie frame: the terminal died but its window stayed), there
+        // is nobody left to exit for us — remove the chrome ourselves.
+        const qint64 pid =
+            chrome->surfaceItem()->surface()->client()->processId();
+        if (!QFile::exists(QStringLiteral("/proc/%1").arg(pid))) {
+            fprintf(stderr, "imira-comp: close on dead client %lld\n",
+                    (long long)pid);
+            removeChrome(chrome);
+            return;
+        }
         chrome->surfaceItem()->surface()->client()->kill(SIGTERM);
     }
 
-private:
     void removeChrome(WindowChrome *chrome)
     {
         if (!m_chromes.removeAll(chrome))
             return;
+        fprintf(stderr, "imira-comp: window gone (%d left)\n",
+                m_chromes.count());
+        // Out of the scene NOW — the deferred delete alone left a ghost
+        // frame on screen when a client died behind our back.
+        chrome->setVisible(false);
+        chrome->setParentItem(nullptr);
         chrome->deleteLater();
         if (!m_chromes.isEmpty())
             raise(m_chromes.last());
         if (m_dock)
             m_dock->update();
     }
+
+private:
 
     QQuickWindow *m_window;
     int m_width;
@@ -862,12 +1057,15 @@ private:
             if (!chrome)
                 return;
             const QPointF inChrome = m_pos - chrome->position();
-            if (b == Qt::LeftButton && ev.value
-                    && chrome->inResize(inChrome)) {
+            const int edges = chrome->resizeEdgesAt(inChrome);
+            if (b == Qt::LeftButton && ev.value && edges) {
                 m_comp->raise(chrome);
                 m_resize = chrome;
+                m_resizeEdges = edges;
                 m_resizeStart = m_pos;
-                m_resizeSize = QSizeF(chrome->width(), chrome->height());
+                m_resizeGeo = QRectF(chrome->position(),
+                                     QSizeF(chrome->width(),
+                                            chrome->height()));
                 chrome->maximized = false;
                 return;
             }
@@ -880,6 +1078,10 @@ private:
                     m_comp->toggleMaximize(chrome);
                 else if (chrome->inMinimize(inChrome))
                     m_comp->minimizeWindow(chrome);
+                else if (chrome->inRotate(inChrome))
+                    chrome->cycleRotation();
+                else if (chrome->inZoom(inChrome))
+                    chrome->toggleZoom();
                 else {          // grab the title bar: start moving
                     m_drag = chrome;
                     m_dragOffset = inChrome;
@@ -911,10 +1113,33 @@ private:
             }
             if (m_resize) {
                 const QPointF d = m_pos - m_resizeStart;
-                const int w = qMax(360.0, m_resizeSize.width() + d.x());
-                const int h = qMax(280.0, m_resizeSize.height() + d.y());
-                m_resize->surfaceItem()->surface()->requestSize(
-                    QSize(w, h - WindowChrome::kTitle));
+                QRectF g = m_resizeGeo;
+                if (m_resizeEdges & WindowChrome::EdgeRight)
+                    g.setWidth(qMax(360.0, m_resizeGeo.width() + d.x()));
+                if (m_resizeEdges & WindowChrome::EdgeBottom)
+                    g.setHeight(qMax(280.0, m_resizeGeo.height() + d.y()));
+                if (m_resizeEdges & WindowChrome::EdgeLeft) {
+                    const qreal w =
+                        qMax(360.0, m_resizeGeo.width() - d.x());
+                    g = QRectF(m_resizeGeo.right() - w, g.y(),
+                               w, g.height());
+                }
+                if (m_resizeEdges & WindowChrome::EdgeTop) {
+                    const qreal h =
+                        qMax(280.0, m_resizeGeo.height() - d.y());
+                    g = QRectF(g.x(), m_resizeGeo.bottom() - h,
+                               g.width(), h);
+                }
+                // The frame follows the mouse NOW; the client is asked to
+                // relayout, and whatever it delivers is fitted into the
+                // frame (syncToSurface) — no more cropping when it refuses.
+                m_resize->setPosition(g.topLeft());
+                m_resize->userSize = g.size();
+                if (!m_resize->zoomMode)
+                    m_resize->surfaceItem()->surface()->requestSize(
+                        QSize((int)g.width(),
+                              (int)g.height() - WindowChrome::kTitle));
+                m_resize->syncToSurface();
                 return;
             }
             WindowChrome *chrome = m_comp->chromeAt(m_pos);
@@ -954,8 +1179,9 @@ private:
     WindowChrome *m_drag = nullptr;
     QPointF m_dragOffset;
     WindowChrome *m_resize = nullptr;
+    int m_resizeEdges = 0;
     QPointF m_resizeStart;
-    QSizeF m_resizeSize;
+    QRectF m_resizeGeo;
     struct OpenDevice {
         int fd;
         QSocketNotifier *notifier;
@@ -1030,6 +1256,29 @@ int main(int argc, char *argv[])
 
     // --- the compositor itself ------------------------------------------
     Compositor compositor(&window, width, height);
+
+    // Keyboard layout for the TV clients ("qwerty instead of qwertz"):
+    // without an explicit keymap the clients fall back to US. Order:
+    // ~/.config/imira/keymap (one word, e.g. "de"), IMIRA_KEYMAP env,
+    // the country of $LANG, else US stays.
+    {
+        QString layout;
+        QFile f(QDir::homePath() + QStringLiteral("/.config/imira/keymap"));
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+            layout = QString::fromUtf8(f.readLine()).trimmed();
+        if (layout.isEmpty())
+            layout = QString::fromLocal8Bit(qgetenv("IMIRA_KEYMAP"));
+        const QString lang = QString::fromLocal8Bit(qgetenv("LANG"));
+        if (layout.isEmpty() && lang.length() >= 5
+                && lang.at(2) == QLatin1Char('_'))
+            layout = lang.mid(3, 2).toLower();
+        if (!layout.isEmpty()) {
+            QWaylandKeymap keymap(layout);
+            compositor.defaultInputDevice()->setKeymap(keymap);
+            fprintf(stderr, "imira-comp: keymap '%s'\n",
+                    qPrintable(layout));
+        }
+    }
 
     // --- dock, TV cursor, external keyboard/pointer ---------------------
     DockItem dock(window.contentItem(), width, height);
