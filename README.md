@@ -8,7 +8,7 @@ the phone talks to the sink directly.
 
 <br clear="left">
 
-As far as we know this is the first working Wi-Fi Display *source* for
+As far as I know this is the first working Wi-Fi Display *source* for
 Sailfish OS. Developed and tested on the **Xperia 10 III** (Sailfish OS
 5.0.0.62) against a Microsoft Wireless Display Adapter V2 and an LG webOS TV
 (native Miracast), using the phone's internal Wi-Fi chip.
