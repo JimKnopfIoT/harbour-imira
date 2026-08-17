@@ -22,3 +22,4 @@ documentation.list
 translations/harbour-imira.ts
 media/
 daemon/comp/imira-comp
+.mb2/
