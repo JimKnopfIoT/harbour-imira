@@ -106,9 +106,7 @@ the most convincing answer yet to "why would a phone be a computer?" simply
 stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
 aethercast, Ubuntu Touch's display casting stack.)
 
-Imira's goal is deliberately more modest than what Canonical was aiming
-for back then. This is not about replacing the PC: **the phone stays a
-phone.** A desktop computer may be needed for maybe 2–5% of personal
+A desktop computer may be needed for maybe 2–5% of personal
 computing — most of the time it sits idle. For the few moments one
 actually sits down in front of one, to write a letter, fill in a form,
 things like that, no powerhouse of a PC is required — the phone would do,
