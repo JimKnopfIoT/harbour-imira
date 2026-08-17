@@ -106,23 +106,22 @@ the most convincing answer yet to "why would a phone be a computer?" simply
 stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
 aethercast, Ubuntu Touch's display casting stack.)
 
-Imira's ambition is deliberately smaller than what Canonical reached for
-back then. This is no attempt to replace the PC: **the phone stays a
-phone.** A desktop is needed for maybe 2–5% of personal computing — the
-moment you sit down to write a letter or fill in a form, the way one used to
-sit down with a sheet of paper. My car is parked 97% of the time; a personal
-PC today does much the same, idling for the rare letter. For those few
-moments, the phone in your pocket has long been powerful enough.
+Imira's goal is deliberately more modest than what Canonical was aiming
+for back then. This is not about replacing the PC: **the phone stays a
+phone.** A desktop computer may be needed for maybe 2–5% of personal
+computing — most of the time it sits idle. For the few moments one
+actually sits down in front of one, to write a letter, fill in a form,
+things like that, no powerhouse of a PC is required — the phone would do,
+if only it had the ability.
 
-That small ambition is what the architecture is sized for. An occasional
-desktop should not require buying anything — so the sink is the TV that is
-already in the room, over the air, no dock, no cable. It tolerates a video
-stream's compromises — encoder latency is invisible while typing a letter,
-unlike while gaming. And it asks nothing of the ecosystem: unmodified
-Sailfish apps, windowed by a compositor they know nothing about. All of
-this is an experiment, and what it is trying for is not pixel perfection
-but **time-to-desktop**: from "I need a screen for a minute" to a blinking
-cursor in seconds, with nothing to think about.
+That ability is the goal of my little experiment: an occasional desktop
+built from hardware you already own. Many TVs speak Miracast — no docking
+station, no elaborate gear, as long as you accept the compromise of a
+video stream (the encoder's latency is imperceptible while typing a
+letter). And it makes no fundamental demands on the ecosystem: unmodified
+Sailfish apps, windowed by a compositor they know nothing about. The aim
+is not pixel perfection, but function that is willing to compromise —
+there when it is needed.
 
 Mirroring the screen was step one. Step two is here: the app has a
 **convergence switch** (experimental) — instead of mirroring, the TV becomes
