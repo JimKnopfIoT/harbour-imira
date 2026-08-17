@@ -14,10 +14,18 @@ Sailfish OS. Developed and tested on the **Xperia 10 III** (Sailfish OS
 (native Miracast), using the phone's internal Wi-Fi chip.
 
 **This is the convergence desktop running on a TV** — Sailfish apps as
-windows, a dock, a mouse cursor, all driven by the phone (screenshot taken
-with the built-in Print-key capture, pixel for pixel what the TV shows):
+windows, a dock, a mouse cursor, all driven by the phone; here a tower
+defense game playing in a window next to a calculator emulator (screenshot
+taken with the built-in Print-key capture, pixel for pixel what the TV
+shows):
 
-<img src="screenshots/tv-desktop.png" width="100%" alt="The convergence desktop on the TV: app windows, dock, mouse cursor">
+<img src="screenshots/tv-desktop.png" width="100%" alt="The convergence desktop on the TV: a game and a calculator emulator as windows, dock, mouse cursor">
+
+And this is real work on the same desktop: a terminal, maximized, driven by
+a Bluetooth keyboard with a proper keymap (QWERTZ and friends) — the
+phone-style on-screen keyboard stays out of the way:
+
+<img src="screenshots/tv-terminal.png" width="100%" alt="A terminal running maximized on the TV desktop, used with a hardware keyboard">
 
 <p>
 <img src="screenshots/phone-main.png" width="240" alt="Phone app: cast controls with the convergence switch">
@@ -120,9 +128,12 @@ Mirroring the screen was step one. Step two is here: the app has a
 **convergence switch** (experimental) — instead of mirroring, the TV becomes
 its own virtual screen (an own Wayland compositor, `daemon/comp/`), and
 Sailfish apps launched onto it appear there as windows while the phone stays
-fully usable. Window management (move/resize/minimize/maximize/close), a dock
-with user-selectable apps, external keyboard and mouse, and TV screenshots
-all work today. Convergence on Sailfish.
+fully usable. Window management works like a desktop today: move, resize
+from every edge, minimize/maximize/close, a dock with user-selectable apps,
+external keyboard (with a real keymap — qwertz included) and mouse, and TV
+screenshots. Apps that insist on their phone layout get two per-window
+escape hatches in the title bar: a rotation override and a zoom mode that
+scales the app instead of asking it to relayout. Convergence on Sailfish.
 
 ## License
 
