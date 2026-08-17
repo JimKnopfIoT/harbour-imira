@@ -98,14 +98,31 @@ the most convincing answer yet to "why would a phone be a computer?" simply
 stopped. (It is no coincidence that Imira's Wi-Fi Direct code descends from
 aethercast, Ubuntu Touch's display casting stack.)
 
-Sailfish OS never got that. This project is the attempt to bring something
-like it to a Sailfish phone. Mirroring the screen was step one. Step two has
-begun: the app has an experimental **convergence switch** — instead of
-mirroring, the TV becomes its own virtual screen (an own Wayland compositor,
-`daemon/comp/`), and Sailfish apps launched onto it appear there as windows
-while the phone stays fully usable. First app windows are showing on the TV;
-next up: a launcher on the TV, mouse/keyboard input, and real window
-management. Convergence on Sailfish.
+Imira's ambition is deliberately smaller than what Canonical reached for
+back then. This is no attempt to replace the PC: **the phone stays a
+phone.** A desktop is needed for maybe 2–5% of personal computing — the
+moment you sit down to write a letter or fill in a form, the way one used to
+sit down with a sheet of paper. My car is parked 97% of the time; a personal
+PC today does much the same, idling for the rare letter. For those few
+moments, the phone in your pocket has long been powerful enough.
+
+That small ambition is what the architecture is sized for. An occasional
+desktop should not require buying anything — so the sink is the TV that is
+already in the room, over the air, no dock, no cable. It tolerates a video
+stream's compromises — encoder latency is invisible while typing a letter,
+unlike while gaming. And it asks nothing of the ecosystem: unmodified
+Sailfish apps, windowed by a compositor they know nothing about. All of
+this is an experiment, and what it is trying for is not pixel perfection
+but **time-to-desktop**: from "I need a screen for a minute" to a blinking
+cursor in seconds, with nothing to think about.
+
+Mirroring the screen was step one. Step two is here: the app has a
+**convergence switch** (experimental) — instead of mirroring, the TV becomes
+its own virtual screen (an own Wayland compositor, `daemon/comp/`), and
+Sailfish apps launched onto it appear there as windows while the phone stays
+fully usable. Window management (move/resize/minimize/maximize/close), a dock
+with user-selectable apps, external keyboard and mouse, and TV screenshots
+all work today. Convergence on Sailfish.
 
 ## License
 
