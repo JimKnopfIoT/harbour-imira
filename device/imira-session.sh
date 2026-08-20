@@ -150,6 +150,10 @@ rm -f /tmp/imira-start /tmp/imira-stop /tmp/imira-scan
 status idle
 while true; do
     if [ ! -e /tmp/imira-start ]; then
+        # App weg -> Selbstbeendung (nur im Leerlauf; 15 s Anlaufgnade).
+        if app_gone && [ "$SECONDS" -gt 15 ]; then
+            exit 0
+        fi
         if radio_off; then
             status nowlan
             rm -f /tmp/imira-scan

@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.0
+Version:    0.10.1
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -92,9 +92,13 @@ install -m 0755 vendor/wpa_supplicant-p2p/extracted/usr/sbin/wpa_cli \
     %{buildroot}/usr/libexec/imira/wpa_cli-p2p
 install -m 0755 device/run-castd.sh %{buildroot}/usr/libexec/imira/
 
+# Not enabled at boot: app-started (polkit rule below), exits with the app.
 install -d %{buildroot}%{_sysconfdir}/systemd/system
 install -m 0644 device/imira.service \
     %{buildroot}%{_sysconfdir}/systemd/system/imira.service
+install -d %{buildroot}%{_datadir}/polkit-1/rules.d
+install -m 0644 device/50-imira.rules \
+    %{buildroot}%{_datadir}/polkit-1/rules.d/50-imira.rules
 
 # Audio-policy exception: keeps the daemon's monitor capture off the mic.
 install -d %{buildroot}%{_sysconfdir}/pulse/xpolicy.conf.d
@@ -105,8 +109,10 @@ install -m 0644 device/imira-xpolicy.conf \
 # Installed straight into /etc/systemd/system, so only a reload is needed.
 # Guarded: during image builds there is no running systemd.
 systemctl daemon-reload >/dev/null 2>&1 || :
-systemctl enable imira.service >/dev/null 2>&1 || :
-systemctl start imira.service >/dev/null 2>&1 || :
+# Upgrades: disable the pre-0.10.1 boot service.
+if [ "$1" -gt 1 ]; then
+    systemctl disable --now imira.service >/dev/null 2>&1 || :
+fi
 # PulseAudio only reads xpolicy.conf.d on startup; kick the user instance
 # (systemd --user respawns it immediately). Without the rule the daemon's
 # monitor capture would be rerouted to the mic — which it refuses, so audio
@@ -143,9 +149,16 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0755,root,root) /usr/libexec/imira/wpa_cli-p2p
 %attr(0755,root,root) /usr/libexec/imira/run-castd.sh
 %attr(0644,root,root) %{_sysconfdir}/systemd/system/imira.service
+%attr(0644,root,root) %{_datadir}/polkit-1/rules.d/50-imira.rules
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Thu Aug 20 2026 harbour-imira contributors 0.10.1-1
+- The session service no longer runs at boot. The app starts it on launch
+  (StartUnit over the system bus, polkit rule scoped to imira.service) and
+  it exits by itself once the app's heartbeat stops. Upgrades disable and
+  stop the old boot service.
+
 * Sun Aug 16 2026 harbour-imira contributors 0.10.0-1
 - Convergence desktop: window management (move, resize grip, minimize,
   maximize, close, stacking, opaque backdrops), dock as task bar with

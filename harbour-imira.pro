@@ -13,7 +13,8 @@
 TARGET = harbour-imira
 
 CONFIG += sailfishapp
-QT += core qml quick
+# dbus only for StartUnit/StopUnit of imira.service.
+QT += core qml quick dbus
 
 # The rpm build passes these (%qmake5 VERSION=%{version}); fallbacks keep a
 # standalone/IDE build from showing an empty version on the About page.
