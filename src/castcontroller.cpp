@@ -7,6 +7,8 @@
 #include <algorithm>
 
 #include <QDateTime>
+#include <QDBusConnection>
+#include <QDBusMessage>
 #include <QDir>
 #include <QImage>
 #include <QFile>
@@ -34,11 +36,30 @@ void touchFlag(const QString &path)
     f.open(QIODevice::WriteOnly | QIODevice::Truncate);
     f.close();
 }
+
+// StartUnit/StopUnit for imira.service on the system bus (polkit rule
+// device/50-imira.rules); the unit is never enabled at boot.
+void serviceUnit(bool on)
+{
+    QDBusMessage call = QDBusMessage::createMethodCall(
+        QStringLiteral("org.freedesktop.systemd1"),
+        QStringLiteral("/org/freedesktop/systemd1"),
+        QStringLiteral("org.freedesktop.systemd1.Manager"),
+        on ? QStringLiteral("StartUnit") : QStringLiteral("StopUnit"));
+    call << QStringLiteral("imira.service") << QStringLiteral("replace");
+    const QDBusMessage reply = QDBusConnection::systemBus().call(call);
+    if (reply.type() == QDBusMessage::ErrorMessage)
+        qWarning("imira: %s imira.service failed: %s",
+                 on ? "start" : "stop", qPrintable(reply.errorMessage()));
+}
 } // namespace
 
 CastController::CastController(QObject *parent)
     : QObject(parent)
 {
+    // Service runs only while the app does; it exits when our heartbeat stops.
+    serviceUnit(true);
+
     // 1 s matches the service's own update cadence; polling faster only
     // re-reads the same line.
     connect(&m_timer, &QTimer::timeout, this, &CastController::poll);
@@ -50,9 +71,15 @@ CastController::~CastController()
 {
     // App closed -> cast ends. The heartbeat file disappears with us, so the
     // service also notices if this destructor never runs (hard kill).
-    if (m_state != QLatin1String("idle") && m_state != QLatin1String("nowlan"))
+    if (m_state != QLatin1String("idle") && m_state != QLatin1String("nowlan")) {
+        // Mid-session no StopUnit: it would SIGTERM the teardown; the service
+        // cleans up on the stop flag and then exits itself.
         stop();
-    QFile::remove(kAlivePath);
+        QFile::remove(kAlivePath);
+    } else {
+        QFile::remove(kAlivePath);
+        serviceUnit(false);
+    }
 }
 
 void CastController::start()

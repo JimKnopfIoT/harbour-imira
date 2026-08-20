@@ -7,6 +7,5 @@ Type=simple
 ExecStart=/usr/libexec/imira/imira-session.sh
 Restart=on-failure
 RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+# Kein [Install]: nie boot-enabled. Die App startet die Unit (StartUnit,
+# polkit-Regel); der Dienst beendet sich selbst, wenn der App-Heartbeat fehlt.

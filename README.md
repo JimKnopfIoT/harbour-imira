@@ -68,6 +68,10 @@ app (Silica UI)  ⇄  flag files in /tmp  ⇄  imira.service (root)
                                                 HW H.264 → MPEG-TS → RTP/UDP
 ```
 
+The service runs only while the app does: the app starts it on launch
+(gated by a polkit rule scoped to this one unit) and it exits by itself once
+the app's heartbeat stops. Nothing runs at boot.
+
 The stock Sailfish `wpa_supplicant` has P2P compiled out, so the service
 ships its own build and runs it alongside the system one — nothing
 system-wide is replaced. `vendor/README.md` has the one-line patch and the

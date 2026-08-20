@@ -1,0 +1,9 @@
+// harbour-imira: defaultuser darf genau imira.service starten/stoppen,
+// sonst nichts.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "imira.service" &&
+        subject.user == "defaultuser") {
+        return polkit.Result.YES;
+    }
+});
