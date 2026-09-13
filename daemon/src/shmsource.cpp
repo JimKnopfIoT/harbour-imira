@@ -33,7 +33,15 @@ bool ShmFrameSource::start(int fps, const FrameCallback &cb)
     m_running = true;
 
     m_thread = std::thread([this, fps, cb]() {
+        // Poll well below the frame period instead of at it. Sleeping a full
+        // period AFTER doing the work made the real cycle "work + period",
+        // and polling in the writer's own rhythm dropped frames on top of
+        // that — the TV got about twelve of the compositor's thirty-one
+        // frames a second, which is what made the cursor stutter. The frame
+        // rate itself is capped on the consumer side.
         const useconds_t interval = 1000000 / fps;
+        const useconds_t poll = interval / 8 > 1000 ? interval / 8 : 1000;
+        const int idleLimit = 2000000 / poll;   // two seconds without a frame
         // Outer loop: (re)attach to the frame buffer. A buffer whose seq
         // freezes is stale — a leftover from a dead imira-comp whose fresh
         // instance re-created the file — so we drop it and open again.
@@ -88,7 +96,7 @@ bool ShmFrameSource::start(int fps, const FrameCallback &cb)
                         cb(copy.data(), (int)hdr.width, (int)hdr.height,
                            (int)hdr.width * 4, 0, /*transform=*/2);
                     }
-                } else if (++idleTicks > 2 * fps) {
+                } else if (++idleTicks > idleLimit) {
                     // Two seconds without a new frame: the writer is gone
                     // (or we mapped a leftover). Reattach to the current
                     // file — the live compositor keeps its seq moving.
@@ -96,7 +104,7 @@ bool ShmFrameSource::start(int fps, const FrameCallback &cb)
                                     "reattaching\n");
                     stale = true;
                 }
-                usleep(interval);
+                usleep(poll);
             }
             munmap(const_cast<uint8_t *>(shm),
                    sizeof(ShmHeader) + frameBytes);

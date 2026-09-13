@@ -217,9 +217,13 @@ int main(int argc, char **argv)
     auto onFrame = [&](const uint8_t *pixels, int width, int height,
                        int stride, uint32_t /*drmFormat*/, int transform) {
         int64_t t = nowUs();
-        if (t - lastQueuedUs.load() < frameIntervalUs) {
+        // Stay at the target frame rate, but with a little slack: a source
+        // that already runs at this rate arrives a hair early now and then,
+        // and an exact threshold would then reject every second frame and
+        // halve the result.
+        if (t - lastQueuedUs.load() < frameIntervalUs - frameIntervalUs / 8) {
             drops++;
-            return; // stay at the target frame rate
+            return;
         }
         // Encoder changes happen BEFORE the frame is built: the converter has
         // to be configured for the new size already, otherwise a frame of the

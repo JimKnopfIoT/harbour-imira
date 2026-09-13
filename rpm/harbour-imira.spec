@@ -167,6 +167,12 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 - Only real Wi-Fi Display sinks are offered as targets. A second phone
   running this app announces the same Wi-Fi Display information as a source
   and used to be picked as a destination.
+- The convergence screen stays put when the phone is turned. It is a
+  landscape desktop of its own; following the sensor belongs to mirroring.
+- The convergence picture is no longer thinned out on its way to the sink.
+  The frame reader slept a full frame period after each frame instead of
+  between frames, and polled in the compositor's own rhythm, so barely more
+  than a third of the rendered frames arrived — the cursor stuttered.
 
 * Thu Aug 20 2026 harbour-imira contributors 0.10.1-1
 - The session service no longer runs at boot. The app starts it on launch
