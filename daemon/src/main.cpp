@@ -190,22 +190,27 @@ int main(int argc, char **argv)
     const int64_t frameIntervalUs = 1000000 / opt.fps;
     std::atomic<int64_t> lastQueuedUs{0};
     std::atomic<long> frames{0}, drops{0};
-    // Content rotation (0/90/270): the orientation sensor keeps its own
-    // value current; a value in /tmp/imira-rotate (polled below) overrides
-    // it manually. Two separate atomics — the sensor must never fight the
-    // override (it used to win for up to one poll interval per turn).
-    std::atomic<int> sensorRotation{0};
-    std::atomic<int> overrideRotation{-1}; // -1 = automatic (sensor)
-    startOrientationWatcher(&sensorRotation);
-    // Live resolution switch via /tmp/imira-res ("720"/"1080"): applied on
-    // the next captured frame through an encoder restart with new size.
-    std::atomic<int> pendingW{0}, pendingH{0}, pendingBr{0};
-
     // Convergence mode (IMIRA_INPUT=shm): frames come from imira-comp's
     // virtual TV screen instead of the lipstick recorder — the phone UI
     // stays interactive and is NOT mirrored.
     const char *inputEnv = getenv("IMIRA_INPUT");
     const bool shmInput = inputEnv && std::string(inputEnv) == "shm";
+
+    // Content rotation (0/90/270): the orientation sensor keeps its own
+    // value current; a value in /tmp/imira-rotate (polled below) overrides
+    // it manually. Two separate atomics — the sensor must never fight the
+    // override (it used to win for up to one poll interval per turn).
+    // Rotation only exists to follow the phone while mirroring it. The
+    // convergence screen is a landscape desktop of its own and must stay
+    // put when the phone turns, so there the frame is never rotated —
+    // neither by the sensor nor by the manual override.
+    std::atomic<int> sensorRotation{0};
+    std::atomic<int> overrideRotation{-1}; // -1 = automatic (sensor)
+    if (!shmInput)
+        startOrientationWatcher(&sensorRotation);
+    // Live resolution switch via /tmp/imira-res ("720"/"1080"): applied on
+    // the next captured frame through an encoder restart with new size.
+    std::atomic<int> pendingW{0}, pendingH{0}, pendingBr{0};
 
     ScreenRecorder rec;
     ShmFrameSource shmSrc;
@@ -216,14 +221,11 @@ int main(int argc, char **argv)
             drops++;
             return; // stay at the target frame rate
         }
-        int ovr = overrideRotation.load();
-        size_t size = 0;
-        uint8_t *frame = conv.convert(pixels, width, height, stride,
-                                      transform == 2 /* y_inverted */,
-                                      ovr >= 0 ? ovr : sensorRotation.load(),
-                                      &size);
-        if (!frame)
-            return;
+        // Encoder changes happen BEFORE the frame is built: the converter has
+        // to be configured for the new size already, otherwise a frame of the
+        // old geometry is queued into the freshly created encoder. Too large
+        // overruns its input buffer — the MediaTek encoder dies right there
+        // ("invalid handle" + error 4) and the stream never recovers.
         int pw = pendingW.exchange(0);
         if (pw) {
             int ph = pendingH.load(), pb = pendingBr.load();
@@ -240,6 +242,16 @@ int main(int argc, char **argv)
             if (!enc.restart())
                 fprintf(stderr, "imira-castd: encoder restart FAILED\n");
         }
+        int ovr = overrideRotation.load();
+        int rot = 0;
+        if (!shmInput)
+            rot = ovr >= 0 ? ovr : sensorRotation.load();
+        size_t size = 0;
+        uint8_t *frame = conv.convert(pixels, width, height, stride,
+                                      transform == 2 /* y_inverted */, rot,
+                                      &size);
+        if (!frame)
+            return;
         lastQueuedUs = t;
         frames++;
         // droidmedia takes microseconds in (MediaCodec convention) but

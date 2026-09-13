@@ -9,9 +9,10 @@ the phone talks to the sink directly.
 <br clear="left">
 
 As far as I know this is the first working Wi-Fi Display *source* for
-Sailfish OS. Developed and tested on the **Xperia 10 III** (Sailfish OS
-5.0.0.62) against a Microsoft Wireless Display Adapter V2 and an LG webOS TV
-(native Miracast), using the phone's internal Wi-Fi chip.
+Sailfish OS. Developed on the **Xperia 10 III** (Sailfish OS 5.0.0.62) and
+also running on the **Jolla phone (2026)** (Sailfish OS 5.2.0.17, MediaTek),
+against a Microsoft Wireless Display Adapter V2 and an LG webOS TV (native
+Miracast), using the phone's internal Wi-Fi chip.
 
 **This is the convergence desktop running on a TV** — Sailfish apps as
 windows, a dock, a mouse cursor, all driven by the phone; here a tower
