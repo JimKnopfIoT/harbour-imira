@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <vector>
 
@@ -33,6 +34,9 @@ bool ShmFrameSource::start(int fps, const FrameCallback &cb)
     m_running = true;
 
     m_thread = std::thread([this, fps, cb]() {
+        // This thread copies and converts every frame; it yields to the
+        // audio path for the same reason the conversion workers do.
+        setpriority(PRIO_PROCESS, 0, 5);
         // Poll well below the frame period instead of at it. Sleeping a full
         // period AFTER doing the work made the real cycle "work + period",
         // and polling in the writer's own rhythm dropped frames on top of

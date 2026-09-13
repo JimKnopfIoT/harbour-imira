@@ -59,6 +59,14 @@ public:
                    bool isIdr, bool withPcrAndPatPmt,
                    std::vector<uint8_t> &out);
 
+    // Emits PAT, PMT and a PCR packet on their own, without any media
+    // payload. The clock has to reach the sink at least every 100 ms, but
+    // it used to ride along on video access units only — with a still
+    // picture the mirror delivers barely two frames a second, so the sink
+    // lost the beat and the SOUND broke up. Returns false if no track was
+    // added. "out" is cleared and filled with three 188-byte packets.
+    bool packetizeClock(std::vector<uint8_t> &out);
+
     // Adds the single WFD LPCM audio track. Only 48000 Hz / 2 channels
     // (16-bit) is supported; returns the track id (always 1) or -1 if the
     // mode is unsupported or an audio track has already been added. Once
