@@ -38,9 +38,19 @@ int64_t nowUs()
         .count();
 }
 
+
 // 10 ms per chunk: 480 samples * 2 ch * 2 bytes.
 constexpr size_t kChunkBytes = 480 * 2 * 2;
 constexpr int64_t kChunkUs = 10000;
+// How far the timeline may wander before it is re-anchored.
+constexpr int64_t kDriftUs = 150000;
+// Capture fragment handed over by PulseAudio. Asking for a tiny one (and
+// with it a tight latency) pushed the null sink down to a ten millisecond
+// deadline that a busy phone cannot meet — the music then broke up while
+// it was played INTO the sink, before any of it reached us. Latency here
+// costs nothing: it is subtracted from the timestamp, and the sink is a
+// second away in any case.
+constexpr size_t kFragBytes = kChunkBytes * 8;   // 80 ms
 
 const char *kSilenceSink = "imira_cast";
 const char *kSilenceMonitor = "imira_cast.monitor";
@@ -101,6 +111,23 @@ struct AudioCapture::Impl {
     // drift between the audio clock and CLOCK_MONOTONIC).
     int64_t anchor = 0;
     int64_t chunks = 0;
+    // Diagnosis for audible stutter: holes are samples PulseAudio could not
+    // hand over (a real gap in the sound), re-anchors are jumps of the
+    // timeline that the sink hears as a glitch. Reported together, rarely.
+    int64_t holes = 0;
+    int64_t holeBytes = 0;
+    int64_t reanchors = 0;
+    int64_t lastReport = 0;
+    int64_t reportedHoles = 0;
+    int64_t reportedReanchors = 0;
+    // A null sink that is not fed in time renders silence rather than
+    // reporting a hole, so a dropout in the played music reaches us as
+    // digital zero. Music never is exactly zero, which makes a run of zero
+    // chunks a reliable marker for audio that never arrived.
+    int64_t zeroRun = 0;
+    int64_t dropouts = 0;
+    int64_t dropoutMs = 0;
+    int64_t reportedDropouts = 0;
 
     void onRead(pa_stream *s);
     void maybeSilence(const pa_sink_input_info *info);
@@ -253,10 +280,27 @@ void AudioCapture::Impl::onRead(pa_stream *s)
         if (pa_stream_peek(s, &data, &nbytes) < 0)
             return;
         if (!data) {            // hole in the stream
-            if (nbytes)
+            if (nbytes) {
+                holes++;
+                holeBytes += nbytes;
                 pa_stream_drop(s);
+            }
             continue;
         }
+        // Wall-clock time of this block's first sample. PulseAudio reports
+        // one latency for the whole block, so every chunk inside it has to
+        // be placed relative to the block's start — estimating the clock
+        // again per chunk makes a large block look like a huge drift and
+        // re-anchors the timeline several times per block.
+        pa_usec_t blat = 0;
+        int bneg = 0;
+        if (pa_stream_get_latency(s, &blat, &bneg) < 0)
+            blat = 0;
+        const int64_t blockLatUs = bneg ? -(int64_t)blat : (int64_t)blat;
+        const int64_t blockUs =
+            (int64_t)nbytes * kChunkUs / (int64_t)kChunkBytes;
+        const int64_t blockWall = nowUs() - blockLatUs - blockUs;
+
         const uint8_t *p = static_cast<const uint8_t *>(data);
         size_t left = nbytes;
         while (left > 0) {
@@ -272,19 +316,54 @@ void AudioCapture::Impl::onRead(pa_stream *s)
             fill = 0;
             if (!verified)
                 continue;       // never ship unverified audio
-            pa_usec_t lat = 0;
-            int neg = 0;
-            if (pa_stream_get_latency(s, &lat, &neg) < 0)
-                lat = 0;
-            int64_t latUs = neg ? -(int64_t)lat : (int64_t)lat;
-            int64_t now = nowUs();
-            int64_t wall = now - latUs - kChunkUs;
+            // End of this chunk inside the block, minus its own length.
+            const int64_t wall =
+                blockWall
+                + (int64_t)(nbytes - left) * kChunkUs / (int64_t)kChunkBytes
+                - kChunkUs;
+            const int64_t now = nowUs();
             if (anchor == 0)
                 anchor = wall - chunks * kChunkUs;
             int64_t pts = anchor + chunks * kChunkUs;
-            if (pts - wall > 2 * kChunkUs || wall - pts > 2 * kChunkUs) {
+            // Only genuine drift or a real gap should move the timeline.
+            // The old window of two chunks (20 ms) was narrower than
+            // ordinary scheduling jitter, so the anchor jumped several
+            // times a second and the sink heard every jump.
+            if (pts - wall > kDriftUs || wall - pts > kDriftUs) {
                 anchor = wall - chunks * kChunkUs;
                 pts = wall;
+                reanchors++;
+            }
+            if (now - lastReport > 5000000) {
+                if (holes != reportedHoles || reanchors != reportedReanchors
+                        || dropouts != reportedDropouts)
+                    fprintf(stderr, "imira-castd: audio %lld holes "
+                                    "(%lld ms lost), %lld re-anchors, "
+                                    "%lld silent gaps (%lld ms)\n",
+                            (long long)holes,
+                            (long long)(holeBytes / (kChunkBytes / 10)),
+                            (long long)reanchors,
+                            (long long)dropouts, (long long)dropoutMs);
+                reportedHoles = holes;
+                reportedReanchors = reanchors;
+                reportedDropouts = dropouts;
+                lastReport = now;
+            }
+            bool zero = true;
+            for (size_t z = 0; z < kChunkBytes; z++) {
+                if (chunk[z]) {
+                    zero = false;
+                    break;
+                }
+            }
+            if (zero) {
+                zeroRun++;
+            } else {
+                if (zeroRun >= 3) {      // 30 ms and more
+                    dropouts++;
+                    dropoutMs += zeroRun * kChunkUs / 1000;
+                }
+                zeroRun = 0;
             }
             chunks++;
             if (chunks == 1)
@@ -298,6 +377,7 @@ void AudioCapture::Impl::onRead(pa_stream *s)
 
 bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
 {
+
     if (m_impl)
         return true;
 
@@ -407,13 +487,14 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
     pa_stream_set_state_callback(im->stream, streamState, im->ml);
     pa_stream_set_read_callback(im->stream, streamRead, im);
 
-    // Small fragments keep the capture latency bounded.
     pa_buffer_attr attr;
     memset(&attr, 0xff, sizeof(attr));
-    attr.fragsize = kChunkBytes;
+    attr.fragsize = kFragBytes;
 
+    // No ADJUST_LATENCY: it would make this stream's wish the sink's
+    // deadline again (see kFragBytes).
     const pa_stream_flags_t flags = (pa_stream_flags_t)(
-        PA_STREAM_DONT_MOVE | PA_STREAM_ADJUST_LATENCY |
+        PA_STREAM_DONT_MOVE |
         PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE);
     if (pa_stream_connect_record(im->stream, src.c_str(), &attr, flags) < 0)
         return fail("stream connect");

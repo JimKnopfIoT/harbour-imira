@@ -33,6 +33,12 @@ private:
     bool m_nv12 = true;
     int m_boxX = 0, m_boxY = 0, m_boxW = 0, m_boxH = 0;
     int m_lastSrcW = 0, m_lastSrcH = 0, m_lastRot = -1;
+    // Precomputed source coordinate per destination coordinate, and the box
+    // filter's sample counts. Computing these per pixel meant a 64-bit
+    // division for every one of them — that alone was most of the work.
+    std::vector<int> m_mapX, m_mapY;
+    int m_sxN = 1, m_syN = 1;
+    int m_threads = 1;   // row bands converted in parallel
     void updateMaps(int srcW, int srcH, int rot);
 };
 

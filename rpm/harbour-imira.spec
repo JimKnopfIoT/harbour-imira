@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.3
+Version:    0.10.4
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -153,6 +153,36 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Sep 13 2026 harbour-imira contributors 0.10.4-1
+- The picture no longer starves the sound. While mirroring, the screen is
+  only captured when something on it changes, and a quiet screen was nudged
+  just twice a second — so the sink received video timestamps up to three
+  quarters of a second apart. Sinks tie their audio output to that clock,
+  and it was heard as stuttering music, not as a stuttering picture. The
+  nudge now keeps the frame rate steady, which also lets the encoder budget
+  its bits normally instead of spending a whole second's worth on the rare
+  frame it got: the picture is sharp immediately after a change of
+  orientation instead of mushy for a moment.
+- The programme clock is sent independently of the video. It used to ride
+  along on video frames, which is fine at thirty frames a second and far
+  outside spec at two.
+- Frames are paced by deadline rather than by a minimum gap. A minimum gap
+  discards a frame that arrives a hair early and then waits a whole period
+  for the next one, halving the rate; measured on one phone, twenty-seven
+  frames a second arrived and fourteen went out.
+- Colour conversion is roughly two and a half times faster: the source
+  coordinates are computed once per geometry instead of once per pixel — a
+  64-bit division for every pixel of every frame — and the rows are now
+  converted on several cores, which yield to the audio path.
+- A large frame is sent in slices, so audio packets are no longer queued
+  behind a third of a megabyte.
+- Audio capture asks for a bigger fragment and no longer demands minimal
+  latency, which had forced the silencing sink down to a ten millisecond
+  deadline. Its timeline is placed per block instead of per chunk and only
+  re-anchors on real drift, not on ordinary jitter.
+- The daemon reports gaps, timeline jumps and silent stretches in the
+  captured audio, which turns "it stutters sometimes" into a number.
+
 * Sun Sep 13 2026 harbour-imira contributors 0.10.3-1
 - Fixes an upgrade trap in 0.10.2: the session address is now removed from
   the base interface before it is put on the group interface. Older versions

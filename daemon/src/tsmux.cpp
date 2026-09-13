@@ -612,6 +612,18 @@ bool TsMux::packetize(const uint8_t *accessUnit, size_t len, int64_t ptsUs,
     return true;
 }
 
+bool TsMux::packetizeClock(std::vector<uint8_t> &out) {
+    out.clear();
+    if (!have_track_)
+        return false;
+    out.resize(3 * 188);
+    uint8_t *packetDataStart = out.data();
+    emitPatAndPmt(packetDataStart);
+    packetDataStart += 2 * 188;
+    emitPcr(packetDataStart);
+    return true;
+}
+
 bool TsMux::packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
                            std::vector<uint8_t> &out) {
     out.clear();

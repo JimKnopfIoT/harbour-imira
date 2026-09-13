@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 #include "audiocapture.h"
@@ -39,6 +40,18 @@ std::atomic<bool> g_needIdr{false};
 void onSignal(int) { _exit(0); }
 
 void onIdrRequest(int) { g_needIdr = true; }
+
+const char *stamp()
+{
+    static char buf[32];
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    tm tmv;
+    localtime_r(&ts.tv_sec, &tmv);
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", tmv.tm_hour, tmv.tm_min,
+             tmv.tm_sec, (int)(ts.tv_nsec / 1000000));
+    return buf;
+}
 
 int64_t nowUs()
 {
@@ -99,7 +112,7 @@ int main(int argc, char **argv)
         mux.addLpcmTrack(48000, 2);
 
     std::mutex sendLock;
-    int64_t lastPatUs = 0;
+    std::atomic<int64_t> lastPatUs{0};
 
     // Debug taps: IMIRA_DUMP_H264 / IMIRA_DUMP_TS write the elementary
     // stream / mux output to files for offline analysis.
@@ -122,7 +135,7 @@ int main(int argc, char **argv)
                 int nal = data[4] & 0x1f;
                 idr = (nal == 7 || nal == 5);
             }
-            std::lock_guard<std::mutex> l(sendLock);
+            std::unique_lock<std::mutex> l(sendLock);
             if (logged < 6) {
                 fprintf(stderr,
                         "imira-castd: AU size=%zu pts=%lld idr=%d cfg=%d "
@@ -142,7 +155,7 @@ int main(int argc, char **argv)
                 return;
             }
             int64_t t = nowUs();
-            bool withPat = idr || (t - lastPatUs) > 100000;
+            bool withPat = idr || (t - lastPatUs.load()) > 100000;
             if (withPat)
                 lastPatUs = t;
             std::vector<uint8_t> ts;
@@ -151,7 +164,26 @@ int main(int argc, char **argv)
                     fwrite(ts.data(), 1, ts.size(), dumpTs);
                     fflush(dumpTs);
                 }
-                rtp.send(ts.data(), ts.size(), t);
+                // Send in slices and let go of the lock between them. When
+                // the picture rate has collapsed — a still screen delivers
+                // barely two frames a second — the encoder is allowed to
+                // spend most of its per-second budget on the one frame it
+                // does get, and a change of orientation then produces a
+                // third of a megabyte at once. Sent as one block it pushes
+                // every audio packet behind it, and that is what the sink
+                // stutters on. Sliced, the sound keeps its turn.
+                const size_t kSlice = 188 * 7 * 32;   // about 42 kB
+                for (size_t off = 0; off < ts.size(); off += kSlice) {
+                    const size_t n = ts.size() - off < kSlice ? ts.size() - off
+                                                              : kSlice;
+                    rtp.send(ts.data() + off, n, t);
+                    if (off + n < ts.size()) {
+                        l.unlock();
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(1));
+                        l.lock();
+                    }
+                }
             }
         });
     if (!ok) {
@@ -189,6 +221,13 @@ int main(int argc, char **argv)
 
     const int64_t frameIntervalUs = 1000000 / opt.fps;
     std::atomic<int64_t> lastQueuedUs{0};
+    // Next time a recorder frame is due (mirroring only; see onFrame).
+    int64_t nextDueUs = 0;
+    // When a frame last ARRIVED — not when one was last passed on. The
+    // nudge below has to look at this: judging by the frames that got
+    // through makes a discarded one look like a sleeping screen, so we
+    // nudge again, and the extra frame is discarded in turn.
+    std::atomic<int64_t> lastFrameUs{0};
     std::atomic<long> frames{0}, drops{0};
     // Convergence mode (IMIRA_INPUT=shm): frames come from imira-comp's
     // virtual TV screen instead of the lipstick recorder — the phone UI
@@ -217,13 +256,26 @@ int main(int argc, char **argv)
     auto onFrame = [&](const uint8_t *pixels, int width, int height,
                        int stride, uint32_t /*drmFormat*/, int transform) {
         int64_t t = nowUs();
-        // Stay at the target frame rate, but with a little slack: a source
-        // that already runs at this rate arrives a hair early now and then,
-        // and an exact threshold would then reject every second frame and
-        // halve the result.
-        if (t - lastQueuedUs.load() < frameIntervalUs - frameIntervalUs / 8) {
-            drops++;
-            return;
+        lastFrameUs = t;
+        // Pace the recorder to the target rate by deadline, not by minimum
+        // gap. The convergence compositor renders on a timer and needs no
+        // pacing at all; the recorder fires on every damage event and does.
+        // A minimum gap looks reasonable and behaves badly: a frame that
+        // arrives a hair early is thrown away, and the next one is then a
+        // whole period later, so the rate halves. Measured on a MediaTek
+        // phone: twenty-seven frames a second arrived, fourteen went out.
+        // A deadline that moves on by exactly one period keeps the average
+        // right and discards only what is genuinely surplus.
+        if (!shmInput) {
+            if (t < nextDueUs) {
+                drops++;
+                return;
+            }
+            // After a pause (a still screen) the deadline would lag far
+            // behind and let a burst through; restart it from now.
+            nextDueUs = (t - nextDueUs > frameIntervalUs)
+                            ? t + frameIntervalUs
+                            : nextDueUs + frameIntervalUs;
         }
         // Encoder changes happen BEFORE the frame is built: the converter has
         // to be configured for the new size already, otherwise a frame of the
@@ -275,14 +327,48 @@ int main(int argc, char **argv)
     fprintf(stderr, "imira-castd: streaming %dx%d@%d -> %s:%d\n", opt.width,
             opt.height, opt.fps, opt.dest.c_str(), opt.port);
 
+    // The programme clock must not depend on the picture. It used to ride
+    // along on video access units, which is fine at thirty frames a second
+    // and hopeless with a still screen — the sink then saw the clock every
+    // six hundred milliseconds instead of every hundred, lost its timing
+    // and the audio broke up. This keeps it going regardless of what the
+    // video path is doing.
+    std::thread clockThread([&]() {
+        while (g_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            const int64_t t = nowUs();
+            // Keep the picture moving at a steady rate. The recorder only
+            // fires when something on screen changes, so a quiet screen used
+            // to be nudged every 500 ms — two frames a second, with gaps of
+            // three quarters of a second between presentation times. Sinks
+            // that tie their audio output to the video clock stumble over
+            // that, and it is heard as stuttering SOUND. A still picture
+            // costs the encoder almost nothing, so the nudge is cheap.
+            if (!shmInput && t - lastFrameUs.load() > frameIntervalUs)
+                rec.requestRepaint();
+            if (t - lastPatUs.load() <= 80000)
+                continue;
+            std::vector<uint8_t> ts;
+            std::lock_guard<std::mutex> l(sendLock);
+            if (t - lastPatUs.load() <= 80000)   // beaten to it by a frame
+                continue;
+            if (mux.packetizeClock(ts)) {
+                lastPatUs = t;
+                if (dumpTs) {
+                    fwrite(ts.data(), 1, ts.size(), dumpTs);
+                    fflush(dumpTs);
+                }
+                rtp.send(ts.data(), ts.size(), t);
+            }
+        }
+    });
+
     // Watchdog: nudge the compositor when the screen is static so the sink
     // keeps receiving frames (and the very first frame appears at all).
     int64_t lastStats = nowUs();
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
         int64_t t = nowUs();
-        if (!shmInput && t - lastQueuedUs.load() > 500000)
-            rec.requestRepaint();
         if (FILE *f = fopen("/tmp/imira-rotate", "r")) {
             int r = 0;
             if (fscanf(f, "%d", &r) == 1 && (r == 0 || r == 90 || r == 270))
@@ -314,12 +400,13 @@ int main(int argc, char **argv)
             pendingW = wantW; // last: acts as the "ready" flag
         }
         if (t - lastStats > 5000000) {
-            fprintf(stderr, "imira-castd: %ld frames (%ld dropped)\n",
-                    frames.load(), drops.load());
+            fprintf(stderr, "imira-castd: [%s] %ld frames (%ld dropped)\n",
+                    stamp(), frames.load(), drops.load());
             lastStats = t;
         }
     }
 
+    clockThread.join();
     if (shmInput)
         shmSrc.stop();
     else
