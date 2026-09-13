@@ -264,6 +264,12 @@ while true; do
         GIF=$1
         MY=$2
         GO=$3
+        # Die Sitzungsadresse gehört ausschließlich auf das Gruppen-Interface.
+        # Ein Rest von früher — etwa auf p2p0, als die Gruppe noch dort lief —
+        # kapert sonst die Route auf ein totes Interface: der Sink verbindet
+        # sich, bekommt keine Antwort und wirft die Gruppe nach 15 s weg.
+        [ "$IFACE" != "$GIF" ] && ip -4 addr flush dev "$IFACE" 2>/dev/null
+        ip -4 addr flush dev "$GIF" 2>/dev/null
         ip addr add "$MY/24" dev "$GIF" 2>/dev/null
         IMIRA_LOCAL_IP="$MY" IMIRA_SINK_IP="$GO" \
         IMIRA_STREAM_CMD="$LIBEXEC/run-castd.sh {ip} {port}" \
