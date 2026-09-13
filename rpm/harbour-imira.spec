@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.2
+Version:    0.10.3
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -153,6 +153,13 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Sep 13 2026 harbour-imira contributors 0.10.3-1
+- Fixes an upgrade trap in 0.10.2: the session address is now removed from
+  the base interface before it is put on the group interface. Older versions
+  ran the group on the base interface and left the address behind, and that
+  leftover kept the route pointing at an interface that is down — the sink
+  connected, got no answer and dropped the group after fifteen seconds.
+
 * Sun Sep 13 2026 harbour-imira contributors 0.10.2-1
 - Works on MediaTek phones. The Wi-Fi Direct group now runs on an interface
   wpa_supplicant creates itself; the built-in p2p0 of a MediaTek chip accepts
