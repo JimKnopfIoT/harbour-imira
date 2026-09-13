@@ -8,6 +8,7 @@ set -u
 LIBEXEC=/usr/libexec/imira
 CTRL=/var/run/wpa_imira
 PIDF=/var/run/imira-wpa.pid
+WPALOG=/tmp/imira-wpa.log
 STATUS=/tmp/imira-status
 IFACE=""
 ATTEMPTS=0
@@ -24,8 +25,19 @@ radio_off() {
     return 1
 }
 
+is_sink() {
+    # wfd_subelems sieht so aus: <id:2><laenge:4><device-information:4>…
+    # Die untersten zwei Bits der Device Information nennen den Gerätetyp:
+    # 0 = Quelle, 1/2 = Senke, 3 = beides. Ohne diese Prüfung gilt jedes
+    # Gerät mit WFD-Infos als Ziel — auch ein zweites Telefon mit imira,
+    # das sich selbst als Quelle meldet.
+    [ "${#1}" -ge 10 ] || return 1
+    [ "${1:0:6}" = "000006" ] || return 1
+    [ $(( 0x${1:6:4} & 3 )) -ne 0 ]
+}
+
 pick_iface() {
-    # Standard: interner Qualcomm-Chip (p2p0) — stabil und STA+P2P-fähig.
+    # Standard: interner Chip (p2p0) — stabil und STA+P2P-fähig.
     # Der 8812au-Treiber einer externen Alfa hat reproduzierbar Kernel-
     # Panics in der P2P-Verhandlung ausgelöst; sie wird nur noch benutzt,
     # wenn das ausdrücklich verlangt ist (touch /etc/imira/prefer-alfa).
@@ -54,12 +66,27 @@ ensure_supplicant() {
     if ! "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" ping >/dev/null 2>&1; then
         [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null
         sleep 1
+        rm -f "$CTRL/$IFACE"
         mkdir -p /etc/imira
         sed "s/@DEVICE_NAME@/Sailfish/" "$LIBEXEC/wpa-imira.conf.in" > /etc/imira/wpa.conf
+        # Die Gruppe läuft auf einem eigenen Interface, das wpa_supplicant
+        # selbst anlegt (p2p-p2p0-0). Der MediaTek-Treiber des Jolla J2
+        # nimmt auf den fest eingebauten p2p0/p2p1 gar kein NL80211_CMD_CONNECT
+        # an (immer -22) — die Verbindung kommt dort nur über ein frisch
+        # erzeugtes Interface zustande. Notausgang für Treiber, die keins
+        # anlegen können: /etc/imira/no-group-iface anlegen.
+        [ -e /etc/imira/no-group-iface ] && \
+            echo "p2p_no_group_iface=1" >> /etc/imira/wpa.conf
+        # Eigenes Logfile statt Syslog: journald ist auf manchen Geräten
+        # winzig und ratenbegrenzt (J2: volatile, 1 MB, Burst 300) — dort
+        # gingen Ereignisse wie P2P-GROUP-STARTED unbemerkt verloren.
+        : > "$WPALOG"
         "$LIBEXEC/wpa_supplicant-p2p" -Dnl80211 -i "$IFACE" -c /etc/imira/wpa.conf \
-            -B -s -P "$PIDF" || return 1
+            >> "$WPALOG" 2>&1 &
+        echo $! > "$PIDF"
         sleep 2
         W="$LIBEXEC/wpa_cli-p2p -p $CTRL -i $IFACE"
+        $W ping >/dev/null 2>&1 || return 1
         $W set wifi_display 1 >/dev/null
         # WFD-IE: Source, RTSP-Port 7236, 50 Mbit/s
         $W wfd_subelem_set 0 000600101c440032 >/dev/null
@@ -112,7 +139,8 @@ scan_once() {
     for a in $($W p2p_peers 2>/dev/null); do
         INFO=$($W p2p_peer "$a" 2>/dev/null)
         NAME=$(echo "$INFO" | grep -m1 "^device_name=" | cut -d= -f2-)
-        if echo "$INFO" | grep -q "^wfd_subelems="; then WFD=1; else WFD=0; fi
+        SUB=$(echo "$INFO" | grep -m1 "^wfd_subelems=" | cut -d= -f2-)
+        if is_sink "$SUB"; then WFD=1; else WFD=0; fi
         printf '%s\t%s\t%s\n' "$a" "$WFD" "${NAME:-?}" >> /tmp/imira-devices.new
     done
     $W p2p_stop_find >/dev/null 2>&1
@@ -201,7 +229,9 @@ while true; do
             { [ "$C" = "imira-castd" ] || [ "$C" = "imira-comp" ]; } && kill -9 "${d#/proc/}" 2>/dev/null
         done
         W="$LIBEXEC/wpa_cli-p2p -p $CTRL -i $IFACE"
-        $W p2p_group_remove "$IFACE" >/dev/null 2>&1
+        # "*" statt des Interface-Namens: die Gruppe hängt an einem eigenen
+        # Interface, dessen Name erst im Ereignis steht.
+        $W p2p_group_remove '*' >/dev/null 2>&1
         status connecting
         : > /tmp/imira-proto.log
         ATTEMPTS=$((ATTEMPTS + 1))
@@ -219,7 +249,7 @@ while true; do
         PEER=$(cat /tmp/imira-peer 2>/dev/null)
         FREQ=""
         [ "$IFACE" = "wlan1" ] && FREQ=2437   # nur die Alfa braucht den Zwang
-        IPS=$(IMIRA_IFACE="$IFACE" IMIRA_CTRL="$CTRL" IMIRA_WPA_PID="$PIDF" \
+        IPS=$(IMIRA_IFACE="$IFACE" IMIRA_CTRL="$CTRL" IMIRA_WPA_LOG="$WPALOG" \
               IMIRA_ATTEMPTS=4 IMIRA_PEER="$PEER" IMIRA_FREQ="$FREQ" \
               "$LIBEXEC/imira-connect.sh" 2>>/tmp/imira-connect.log)
         if [ -z "$IPS" ]; then
@@ -261,8 +291,7 @@ while true; do
     MID=$(su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl list short modules" 2>/dev/null \
           | grep "sink_name=imira_cast" | cut -f1)
     [ -n "$MID" ] && su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl unload-module $MID" 2>/dev/null
-    "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" p2p_group_remove "${GIF:-$IFACE}" >/dev/null 2>&1
-    "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" p2p_group_remove "$IFACE" >/dev/null 2>&1
+    "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" p2p_group_remove '*' >/dev/null 2>&1
     stop_supplicant
     rm -f /tmp/imira-start /tmp/imira-target
     status idle

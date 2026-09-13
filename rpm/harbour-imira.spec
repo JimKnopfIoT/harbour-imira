@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.1
+Version:    0.10.2
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -153,6 +153,21 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Sep 13 2026 harbour-imira contributors 0.10.2-1
+- Works on MediaTek phones. The Wi-Fi Direct group now runs on an interface
+  wpa_supplicant creates itself; the built-in p2p0 of a MediaTek chip accepts
+  discovery and group negotiation but never an association, so every cast
+  failed there right after the peer said yes.
+- A resolution change no longer kills the encoder. The frame was still built
+  in the old geometry and then handed to the freshly created encoder, which
+  overran its input buffer — fatal on MediaTek, survivable on Qualcomm.
+- Connection events are read from the supplicant's own log instead of the
+  journal, which on some devices is volatile, tiny and rate limited, and
+  silently dropped the very lines the connect step waits for.
+- Only real Wi-Fi Display sinks are offered as targets. A second phone
+  running this app announces the same Wi-Fi Display information as a source
+  and used to be picked as a destination.
+
 * Thu Aug 20 2026 harbour-imira contributors 0.10.1-1
 - The session service no longer runs at boot. The app starts it on launch
   (StartUnit over the system bus, polkit rule scoped to imira.service) and
