@@ -31,6 +31,7 @@ constexpr unsigned int kPIDofPMT = 0x100;
 constexpr unsigned int kPIDofPCR = 0x1000;
 constexpr unsigned int kVideoPID = 0x1011;
 
+
 constexpr unsigned int kH264StreamType = 0x1b;
 constexpr unsigned int kVideoStreamId = 0xe0;
 constexpr unsigned int kAVCVideoDescriptorTag = 40;
@@ -514,7 +515,8 @@ bool TsMux::packetize(const uint8_t *accessUnit, size_t len, int64_t ptsUs,
     }
 
     // Adjust time to the 90 kHz PTS base.
-    uint64_t PTS = (static_cast<uint64_t>(ptsUs) * 9ll) / 100ll;
+    uint64_t PTS =
+        (static_cast<uint64_t>(ptsUs + presentation_delay_us_) * 9ll) / 100ll;
 
     if (PES_packet_length >= 65536) {
         // Valid for video per spec: 0 means unbounded.
@@ -669,7 +671,8 @@ bool TsMux::packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
 
         // Adjust time to the 90 kHz PTS base (like video).
         uint64_t PTS =
-            (static_cast<uint64_t>(audio_pending_pts_us_) * 9ll) / 100ll;
+            (static_cast<uint64_t>(audio_pending_pts_us_ + presentation_delay_us_)
+             * 9ll) / 100ll;
 
         appendAudioPes(au, sizeof(au), PTS, out);
 

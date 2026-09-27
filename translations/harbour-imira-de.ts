@@ -20,6 +20,10 @@
         <source>License: GNU GPLv3. Parts of the Wi-Fi Direct and screen recording code are derived from the aethercast and screencast projects.</source>
         <translation>Lizenz: GNU GPLv3. Teile des Wi-Fi-Direct- und Bildschirmaufnahme-Codes stammen aus den Projekten aethercast und screencast.</translation>
     </message>
+    <message>
+        <source>Diagnostics</source>
+        <translation>Diagnose</translation>
+    </message>
 </context>
 <context>
     <name>CoverPage</name>
@@ -55,6 +59,78 @@
         <source>%1 frames</source>
         <extracomment>%1 is the number of transmitted frames</extracomment>
         <translation>%1 Bilder</translation>
+    </message>
+    <message>
+        <source>Waiting for receiver</source>
+        <translation>Warte auf Empfänger</translation>
+    </message>
+</context>
+<context>
+    <name>DiagnosticsPage</name>
+    <message>
+        <source>Diagnostics</source>
+        <translation>Diagnose</translation>
+    </message>
+    <message>
+        <source>Casting does not work with your receiver? A report shows what happened. Post it in the forum or on GitHub — it is in English so that anyone can read it.</source>
+        <translation>Das Übertragen klappt mit deinem Empfänger nicht? Ein Bericht zeigt, was passiert ist. Poste ihn im Forum oder auf GitHub – er ist auf Englisch, damit ihn jeder lesen kann.</translation>
+    </message>
+    <message>
+        <source>1. Record</source>
+        <translation>1. Aufzeichnen</translation>
+    </message>
+    <message>
+        <source>Detailed log</source>
+        <translation>Ausführliches Log</translation>
+    </message>
+    <message>
+        <source>Records the Wi-Fi Direct negotiation in full detail. Takes effect from the next cast and switches itself off once a report has been created.</source>
+        <translation>Zeichnet die Wi-Fi-Direct-Aushandlung in allen Einzelheiten auf. Gilt ab der nächsten Übertragung und schaltet sich ab, sobald ein Bericht erstellt wurde.</translation>
+    </message>
+    <message>
+        <source>Then switch on the receiver, start a cast, wait about 30 seconds, stop it and come back here.</source>
+        <translation>Schalte dann den Empfänger ein, starte eine Übertragung, warte etwa 30 Sekunden, beende sie und komm hierher zurück.</translation>
+    </message>
+    <message>
+        <source>2. Create report</source>
+        <translation>2. Bericht erstellen</translation>
+    </message>
+    <message>
+        <source>Include radio environment</source>
+        <translation>Funkumgebung einbeziehen</translation>
+    </message>
+    <message>
+        <source>Adds the channel of your Wi-Fi connection and how busy each channel is (number of networks and signal strength, no network names).</source>
+        <translation>Ergänzt den Kanal deiner WLAN-Verbindung und wie belegt jeder Kanal ist (Anzahl der Netze und Signalstärke, keine Netznamen).</translation>
+    </message>
+    <message>
+        <source>Create report</source>
+        <translation>Bericht erstellen</translation>
+    </message>
+    <message>
+        <source>Searching for receivers and collecting…</source>
+        <translation>Suche Empfänger und sammle Daten …</translation>
+    </message>
+    <message>
+        <source>Stop casting first.</source>
+        <translation>Beende zuerst die Übertragung.</translation>
+    </message>
+    <message>
+        <source>Saved in Documents: %1</source>
+        <extracomment>%1 is the file name of the report in the Documents folder</extracomment>
+        <translation>Gespeichert in Dokumente: %1</translation>
+    </message>
+    <message>
+        <source>Copy to clipboard</source>
+        <translation>In die Zwischenablage kopieren</translation>
+    </message>
+    <message>
+        <source>Copied</source>
+        <translation>Kopiert</translation>
+    </message>
+    <message>
+        <source>The report is anonymized: MAC addresses are cut to the manufacturer part, names of other devices and networks are removed. Please look it over before posting it.</source>
+        <translation>Der Bericht ist anonymisiert: MAC-Adressen sind auf den Herstellerteil gekürzt, Namen anderer Geräte und Netze entfernt. Bitte sieh ihn dir an, bevor du ihn postest.</translation>
     </message>
 </context>
 <context>
@@ -222,6 +298,24 @@
     <message>
         <source>Connection attempts</source>
         <translation>Verbindungsversuche</translation>
+    </message>
+    <message>
+        <source>Waiting for receiver</source>
+        <translation>Warte auf Empfänger</translation>
+    </message>
+    <message>
+        <source>Creating diagnostic report…</source>
+        <translation>Erstelle Diagnosebericht …</translation>
+    </message>
+    <message>
+        <source>Your Wi-Fi uses a radar channel (%1 MHz) that the cast cannot share. This can cause dropouts: use a 2.4 GHz network or disconnect from Wi-Fi while casting.</source>
+        <extracomment>%1 = frequency of the phone&apos;s Wi-Fi in MHz</extracomment>
+        <translation>Dein WLAN funkt auf einem Radar-Kanal (%1 MHz), den die Übertragung nicht mitnutzen kann. Das kann Aussetzer verursachen: Nutze ein 2,4-GHz-Netz oder trenne das WLAN während der Übertragung.</translation>
+    </message>
+    <message>
+        <source>The receiver chose another channel (%1 MHz) than your Wi-Fi (%2 MHz). This can cause dropouts: disconnect from Wi-Fi while casting if picture or sound break up.</source>
+        <extracomment>%1 = receiver&apos;s channel, %2 = phone&apos;s Wi-Fi, both in MHz</extracomment>
+        <translation>Der Empfänger hat einen anderen Kanal (%1 MHz) gewählt als dein WLAN (%2 MHz). Das kann Aussetzer verursachen: Trenne das WLAN während der Übertragung, falls Bild oder Ton stocken.</translation>
     </message>
 </context>
 <context>

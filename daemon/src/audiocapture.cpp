@@ -24,6 +24,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <ctime>
 
 #include <pulse/pulseaudio.h>
 
@@ -42,15 +44,25 @@ int64_t nowUs()
 // 10 ms per chunk: 480 samples * 2 ch * 2 bytes.
 constexpr size_t kChunkBytes = 480 * 2 * 2;
 constexpr int64_t kChunkUs = 10000;
-// How far the timeline may wander before it is re-anchored.
-constexpr int64_t kDriftUs = 150000;
-// Capture fragment handed over by PulseAudio. Asking for a tiny one (and
-// with it a tight latency) pushed the null sink down to a ten millisecond
-// deadline that a busy phone cannot meet — the music then broke up while
-// it was played INTO the sink, before any of it reached us. Latency here
-// costs nothing: it is subtracted from the timestamp, and the sink is a
-// second away in any case.
-constexpr size_t kFragBytes = kChunkBytes * 8;   // 80 ms
+// Audio clock (details in onRead): sample position plus an offset taken from
+// the minimum of arrival times. It is never moved in jumps once settled: the
+// sink keys the picture to the audio clock, and the quarter-second jumps of
+// 0.10.4 (re-anchor at 150 ms "drift" measured against PulseAudio's latency
+// figure) made every frame late at once — picture stuttering or black, sound
+// dropping out. Only a stall beyond kHardUs is followed at once.
+constexpr int64_t kHardUs = 500000;
+constexpr int64_t kMinWinUs = 2000000;      // window of the arrival minimum
+constexpr int64_t kClockSettleUs = 10000000; // follow the minimum directly
+constexpr int64_t kSlewUsPerS = 5000;       // then at most 5 ms per second
+// Capture fragment, requested WITH ADJUST_LATENCY (see start()). PulseAudio
+// gives the silencing sink the smallest latency any of its streams asks for.
+// A player asks for about 100 ms, which makes a deadline of about 90 ms that
+// a busy phone meets. This stream must ask for MORE, so that it never
+// tightens that deadline — 10 ms (0.10.3) and even 80 ms made the music
+// break up while it was played into the sink. But it must ask: without any
+// request, i.e. with no player attached, PulseAudio falls back to about two
+// seconds, and audio in two-second lumps turns the picture black.
+constexpr size_t kFragBytes = kChunkBytes * 25;   // 250 ms
 
 const char *kSilenceSink = "imira_cast";
 const char *kSilenceMonitor = "imira_cast.monitor";
@@ -106,11 +118,29 @@ struct AudioCapture::Impl {
 
     uint8_t chunk[kChunkBytes];
     size_t fill = 0;
-    // PTS runs on the sample counter, anchored once at start and gently
-    // re-anchored when drift vs the wall clock exceeds one chunk (rate
-    // drift between the audio clock and CLOCK_MONOTONIC).
-    int64_t anchor = 0;
+    // Chunks handed out (statistics; the PTS comes from the byte position).
     int64_t chunks = 0;
+    // Arrival-minimum clock (see onRead).
+    int64_t bytesRead = 0;
+    int64_t base = 0;
+    int64_t clockStartUs = 0;
+    int64_t lastBlockUs = 0;
+    std::deque<std::pair<int64_t, int64_t>> minWin;
+    // Report: how far the offset lags its target, and how much was slewed.
+    double driftEma = 0;
+    int64_t slewedUs = 0;
+    int64_t reportedSlewedUs = 0;
+    // Diagnosis: samples actually read vs. the monotonic clock since the
+    // first chunk, the last latency PulseAudio reported, and overflows
+    // (PulseAudio silently discarding data we did not read in time).
+    int64_t firstChunkUs = 0;
+    int64_t lastLatUs = 0;
+    int64_t overflows = 0;
+    // Measurement session ("trace" in /tmp/imira-castd-flags): one CSV line
+    // per block PulseAudio hands over, with its own timing info — the data
+    // a robust audio clock gets designed from.
+    FILE *trace = nullptr;
+    long traceLines = 0;
     // Diagnosis for audible stutter: holes are samples PulseAudio could not
     // hand over (a real gap in the sound), re-anchors are jumps of the
     // timeline that the sink hears as a glitch. Reported together, rarely.
@@ -130,6 +160,7 @@ struct AudioCapture::Impl {
     int64_t reportedDropouts = 0;
 
     void onRead(pa_stream *s);
+    void traceBlock(pa_stream *s, size_t nbytes, bool hole);
     void maybeSilence(const pa_sink_input_info *info);
 };
 
@@ -143,6 +174,11 @@ void contextState(pa_context *, void *ud)
 void streamState(pa_stream *, void *ud)
 {
     pa_threaded_mainloop_signal(static_cast<pa_threaded_mainloop *>(ud), 0);
+}
+
+void streamOverflow(pa_stream *, void *ud)
+{
+    static_cast<AudioCapture::Impl *>(ud)->overflows++;
 }
 
 void streamRead(pa_stream *s, size_t, void *ud)
@@ -272,6 +308,30 @@ void AudioCapture::Impl::maybeSilence(const pa_sink_input_info *info)
             info->index, app ? app : "?");
 }
 
+void AudioCapture::Impl::traceBlock(pa_stream *s, size_t nbytes, bool hole)
+{
+    pa_usec_t lat = 0;
+    int neg = 0;
+    if (pa_stream_get_latency(s, &lat, &neg) < 0)
+        lat = 0;
+    timespec rt;
+    clock_gettime(CLOCK_REALTIME, &rt);
+    const pa_timing_info *ti = pa_stream_get_timing_info(s);
+    fprintf(trace, "%lld,%lld,%lld,%zu,%d,%lld,%lld,%lld,%lld,%lld,%lld,%d\n",
+            (long long)nowUs(),
+            (long long)rt.tv_sec * 1000 + rt.tv_nsec / 1000000,
+            (long long)(neg ? -(int64_t)lat : (int64_t)lat), nbytes, hole ? 1 : 0,
+            (long long)chunks,
+            ti ? (long long)ti->timestamp.tv_sec * 1000000 + ti->timestamp.tv_usec : 0LL,
+            ti ? (long long)ti->source_usec : 0LL,
+            ti ? (long long)ti->transport_usec : 0LL,
+            ti ? (long long)ti->write_index : 0LL,
+            ti ? (long long)ti->read_index : 0LL,
+            ti ? ti->write_index_corrupt : -1);
+    if (++traceLines % 20 == 0)
+        fflush(trace);
+}
+
 void AudioCapture::Impl::onRead(pa_stream *s)
 {
     while (pa_stream_readable_size(s) > 0) {
@@ -279,27 +339,67 @@ void AudioCapture::Impl::onRead(pa_stream *s)
         size_t nbytes = 0;
         if (pa_stream_peek(s, &data, &nbytes) < 0)
             return;
+        if (trace)
+            traceBlock(s, nbytes, !data);
         if (!data) {            // hole in the stream
             if (nbytes) {
                 holes++;
                 holeBytes += nbytes;
+                // Lost time still passed: keep the sample timeline aligned.
+                bytesRead += nbytes;
+                chunks += nbytes / kChunkBytes;
                 pa_stream_drop(s);
             }
             continue;
         }
-        // Wall-clock time of this block's first sample. PulseAudio reports
-        // one latency for the whole block, so every chunk inside it has to
-        // be placed relative to the block's start — estimating the clock
-        // again per chunk makes a large block look like a huge drift and
-        // re-anchors the timeline several times per block.
-        pa_usec_t blat = 0;
-        int bneg = 0;
-        if (pa_stream_get_latency(s, &blat, &bneg) < 0)
-            blat = 0;
-        const int64_t blockLatUs = bneg ? -(int64_t)blat : (int64_t)blat;
-        const int64_t blockUs =
-            (int64_t)nbytes * kChunkUs / (int64_t)kChunkBytes;
-        const int64_t blockWall = nowUs() - blockLatUs - blockUs;
+        // Audio clock. The timeline is the sample count plus an offset, and
+        // the offset comes from ARRIVAL times, never from PulseAudio's
+        // latency figure: measured on the J2, that figure wobbles around
+        // zero (even negative) and reads 711 ms for the backlog of the first
+        // blocks — the old anchor on the very first chunk put the whole
+        // timeline 0.7 s off, sound and picture stayed away until a re-anchor
+        // 45 s later. A block can never arrive before it was captured, so
+        // the MINIMUM of (arrival - sample time of the block's end) over a
+        // short window is a tight, robust bound; blocks delayed by a load
+        // spike (turning the phone) only raise single values and are
+        // ignored. The offset follows that minimum directly for the first
+        // seconds, then by at most kSlewUsPerS — inaudible, and enough for
+        // any real clock drift. Only a jump beyond kHardUs is followed at
+        // once (the stream really stalled).
+        {
+            pa_usec_t blat = 0;
+            int bneg = 0;
+            if (pa_stream_get_latency(s, &blat, &bneg) == 0)
+                lastLatUs = bneg ? -(int64_t)blat : (int64_t)blat;   // report only
+        }
+        const int64_t arrival = nowUs();
+        bytesRead += nbytes;
+        const int64_t endSampleUs = bytesRead * kChunkUs / (int64_t)kChunkBytes;
+        const int64_t o = arrival - endSampleUs;
+        while (!minWin.empty() && minWin.front().first < arrival - kMinWinUs)
+            minWin.pop_front();
+        while (!minWin.empty() && minWin.back().second >= o)
+            minWin.pop_back();
+        minWin.emplace_back(arrival, o);
+        const int64_t target = minWin.front().second;
+        if (clockStartUs == 0) {
+            clockStartUs = arrival;
+            base = target;
+        } else if (arrival - clockStartUs < kClockSettleUs
+                   || target - base > kHardUs || base - target > kHardUs) {
+            if (arrival - clockStartUs >= kClockSettleUs)
+                reanchors++;
+            base = target;
+        } else {
+            const int64_t lim = (arrival - lastBlockUs) * kSlewUsPerS / 1000000 + 1;
+            int64_t d = target - base;
+            if (d > lim) d = lim;
+            if (d < -lim) d = -lim;
+            base += d;
+            slewedUs += d > 0 ? d : -d;
+        }
+        lastBlockUs = arrival;
+        driftEma = (double)(target - base);   // report: how far base lags
 
         const uint8_t *p = static_cast<const uint8_t *>(data);
         size_t left = nbytes;
@@ -316,37 +416,42 @@ void AudioCapture::Impl::onRead(pa_stream *s)
             fill = 0;
             if (!verified)
                 continue;       // never ship unverified audio
-            // End of this chunk inside the block, minus its own length.
-            const int64_t wall =
-                blockWall
-                + (int64_t)(nbytes - left) * kChunkUs / (int64_t)kChunkBytes
-                - kChunkUs;
             const int64_t now = nowUs();
-            if (anchor == 0)
-                anchor = wall - chunks * kChunkUs;
-            int64_t pts = anchor + chunks * kChunkUs;
-            // Only genuine drift or a real gap should move the timeline.
-            // The old window of two chunks (20 ms) was narrower than
-            // ordinary scheduling jitter, so the anchor jumped several
-            // times a second and the sink heard every jump.
-            if (pts - wall > kDriftUs || wall - pts > kDriftUs) {
-                anchor = wall - chunks * kChunkUs;
-                pts = wall;
-                reanchors++;
-            }
+            // Start of this chunk by its byte position in the stream — not
+            // by the chunk counter, which skips the chunks held back until
+            // the source was verified.
+            const int64_t pts = base
+                + (bytesRead - (int64_t)left) * kChunkUs / (int64_t)kChunkBytes
+                - kChunkUs;
             if (now - lastReport > 5000000) {
                 if (holes != reportedHoles || reanchors != reportedReanchors
-                        || dropouts != reportedDropouts)
+                        || dropouts != reportedDropouts
+                        || slewedUs != reportedSlewedUs) {
+                    const double el = firstChunkUs ? (double)(now - firstChunkUs) : 0;
+                    fprintf(stderr, "imira-castd: audio clock: %.4f of real time "
+                                    "(%lld ms read in %.1f s), latency %lld ms, "
+                                    "%lld overflows\n",
+                            el > 0 ? chunks * (double)kChunkUs / el : 0.0,
+                            (long long)(chunks * kChunkUs / 1000), el / 1e6,
+                            (long long)(lastLatUs / 1000), (long long)overflows);
+                }
+                if (holes != reportedHoles || reanchors != reportedReanchors
+                        || dropouts != reportedDropouts
+                        || slewedUs != reportedSlewedUs)
                     fprintf(stderr, "imira-castd: audio %lld holes "
                                     "(%lld ms lost), %lld re-anchors, "
+                                    "slewed %lld ms, drift %lld ms, "
                                     "%lld silent gaps (%lld ms)\n",
                             (long long)holes,
                             (long long)(holeBytes / (kChunkBytes / 10)),
                             (long long)reanchors,
+                            (long long)(slewedUs / 1000),
+                            (long long)(driftEma / 1000),
                             (long long)dropouts, (long long)dropoutMs);
                 reportedHoles = holes;
                 reportedReanchors = reanchors;
                 reportedDropouts = dropouts;
+                reportedSlewedUs = slewedUs;
                 lastReport = now;
             }
             bool zero = true;
@@ -365,6 +470,8 @@ void AudioCapture::Impl::onRead(pa_stream *s)
                 }
                 zeroRun = 0;
             }
+            if (chunks == 0)
+                firstChunkUs = now - kChunkUs;
             chunks++;
             if (chunks == 1)
                 fprintf(stderr, "imira-castd: audio flowing (pts=%lld)\n",
@@ -394,6 +501,18 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
     }
 
     Impl *im = new Impl;
+    if (FILE *ff = fopen("/tmp/imira-castd-flags", "r")) {
+        char w[64];
+        while (fscanf(ff, "%63s", w) == 1)
+            if (!strcmp(w, "trace")) {
+                im->trace = fopen("/tmp/imira-audio-trace.csv", "w");
+                if (im->trace)
+                    fprintf(im->trace, "mono_us,real_ms,latency_us,nbytes,hole,"
+                                       "chunks,ti_ts_us,source_usec,transport_usec,"
+                                       "write_index,read_index,wi_corrupt\n");
+            }
+        fclose(ff);
+    }
     im->cb = cb;
     im->ml = pa_threaded_mainloop_new();
     pa_mainloop_api *api = pa_threaded_mainloop_get_api(im->ml);
@@ -486,15 +605,16 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
         return fail("stream new");
     pa_stream_set_state_callback(im->stream, streamState, im->ml);
     pa_stream_set_read_callback(im->stream, streamRead, im);
+    pa_stream_set_overflow_callback(im->stream, streamOverflow, im);
 
     pa_buffer_attr attr;
     memset(&attr, 0xff, sizeof(attr));
     attr.fragsize = kFragBytes;
 
-    // No ADJUST_LATENCY: it would make this stream's wish the sink's
-    // deadline again (see kFragBytes).
+    // ADJUST_LATENCY with the 250 ms fragment (see kFragBytes): bounded
+    // latency when no player is attached, the player's deadline otherwise.
     const pa_stream_flags_t flags = (pa_stream_flags_t)(
-        PA_STREAM_DONT_MOVE |
+        PA_STREAM_DONT_MOVE | PA_STREAM_ADJUST_LATENCY |
         PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE);
     if (pa_stream_connect_record(im->stream, src.c_str(), &attr, flags) < 0)
         return fail("stream connect");

@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.4
+Version:    0.10.5
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -82,6 +82,8 @@ install -m 0755 daemon/comp/imira-comp %{buildroot}/usr/libexec/imira/imira-comp
 install -m 0755 device/imira-session.sh   %{buildroot}/usr/libexec/imira/
 install -m 0755 device/imira-connect.sh   %{buildroot}/usr/libexec/imira/
 install -m 0755 device/imira-wfd-proto.py %{buildroot}/usr/libexec/imira/
+install -m 0755 device/imira-dhcp.sh      %{buildroot}/usr/libexec/imira/
+install -m 0755 device/imira-report.py    %{buildroot}/usr/libexec/imira/
 install -m 0644 device/wpa-imira.conf.in  %{buildroot}/usr/libexec/imira/
 
 # Bundled P2P-capable wpa_supplicant (the stock one has P2P compiled out).
@@ -144,6 +146,8 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0755,root,root) /usr/libexec/imira/imira-session.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-connect.sh
 %attr(0755,root,root) /usr/libexec/imira/imira-wfd-proto.py
+%attr(0755,root,root) /usr/libexec/imira/imira-dhcp.sh
+%attr(0755,root,root) /usr/libexec/imira/imira-report.py
 %attr(0644,root,root) /usr/libexec/imira/wpa-imira.conf.in
 %attr(0755,root,root) /usr/libexec/imira/wpa_supplicant-p2p
 %attr(0755,root,root) /usr/libexec/imira/wpa_cli-p2p
@@ -153,6 +157,51 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Sep 27 2026 harbour-imira contributors 0.10.5-1
+- The picture no longer goes black after a few seconds, which it did with
+  0.10.4 on the Jolla Phone 2026. The audio capture had stopped asking
+  PulseAudio for a latency; with nothing else asking, PulseAudio then
+  handed the sound over in two-second lumps whose timestamps ran up to
+  three seconds ahead, and the receiver, which keys the picture to the
+  audio clock, threw every frame away.
+- A new audio clock. The timeline follows the sample position, anchored on
+  arrival times instead of PulseAudio's latency figure, which wobbles
+  around zero and read 711 ms for the first blocks. The old clock jumped by
+  a quarter of a second whenever that figure drifted — heard as the sound
+  swallowing itself every few seconds, and after turning the phone as a
+  black picture. The new one was designed on recorded data and moves by at
+  most a few milliseconds a second.
+- Sound and picture get a presentation margin of 150 ms, so the audio
+  reaches the receiver before it is due instead of being dropped as late.
+- One radio, one channel. When the phone is connected to a Wi-Fi network,
+  the cast now asks the receiver for that network's channel, so the radio
+  no longer has to hop between two channels and lose packets on the way —
+  measured as the main cause of remaining dropouts. If the network uses a
+  radar channel (5 GHz, 52–144) that Wi-Fi Direct may not share, or the
+  receiver declines, the app says so and suggests a 2.4 GHz network or
+  disconnecting while casting.
+- Diagnostics page (About → Diagnostics) for receivers nobody has tested
+  yet. A detailed log records the whole Wi-Fi Direct negotiation, and a
+  report collects everything needed to find out why a cast fails: a fresh
+  search for receivers with what each one says about itself, the connect
+  and handshake logs, the relevant part of the supplicant log, the phone's
+  wireless capabilities, the Wi-Fi channel and, optionally, the channels in
+  use around it. The report is anonymized — MAC addresses cut to the maker
+  part, names of other devices and networks, serial numbers and public
+  addresses removed — and lands in Documents, ready to be copied into a
+  forum post.
+- Receivers that hand out addresses by DHCP now work. The address used to
+  come only from the Wi-Fi Direct handshake itself, a newer feature many
+  TVs lack; without it the TV never learned where to connect.
+- "Streaming" now means that pictures are actually going out. Until the
+  receiver has set up the session, the app says "Waiting for receiver".
+  A receiver that never opens the session is given up on after a minute,
+  and such an attempt counts as failed instead of being retried forever.
+- Every log is in English and time-stamped, and says much more: the
+  receiver's details per attempt, why the supplicant gave up, where the
+  address came from, which channels are in use, and what goes in and comes
+  out of the encoder.
+
 * Sun Sep 13 2026 harbour-imira contributors 0.10.4-1
 - The picture no longer starves the sound. While mirroring, the screen is
   only captured when something on it changes, and a quiet screen was nudged

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# xmira-wfd-proto.py — Wi-Fi-Display-Source-Prototyp (Machbarkeitsnachweis).
-# Fuehrt den WFD-RTSP-Handshake (M1-M8) mit dem Sink und streamt bei PLAY
-# eine vorencodierte MPEG-TS-Datei per RTP. Kein Capture, kein Encoder.
+# imira-wfd-proto.py — Wi-Fi-Display-Source: führt den WFD-RTSP-Handshake
+# (M1-M8) mit dem Sink und startet bei PLAY den Stream (IMIRA_STREAM_CMD,
+# sonst zum Testen eine vorencodierte MPEG-TS-Datei). Log englisch.
 import os
 import re
 import signal
@@ -98,11 +98,11 @@ class WFDSession:
                         last_keepalive = now
                     continue
                 if now - last_msg > 90:
-                    log("!! 90 s ohne Nachrichten vor PLAY — gebe auf")
+                    log("!! no message from the sink for 90 s before PLAY, giving up (state %s)" % self.state)
                     break
                 continue
             if msg is None:
-                log("!! Verbindung vom Sink geschlossen")
+                log("!! sink closed the connection (state %s)" % self.state)
                 break
             last_msg = time.time()
             head, body = msg
@@ -122,7 +122,7 @@ class WFDSession:
 
     def handle_reply(self, first, head, body):
         if "200" not in first:
-            log("!! Fehlerantwort:", first)
+            log("!! error reply in state %s:" % self.state, first)
             return
         if self.state == "init":
             # Antwort auf M1: erst auf M2 (OPTIONS vom Sink) warten, M3 kommt danach
@@ -135,7 +135,7 @@ class WFDSession:
                 p = re.search(r"(\d{3,5})", self.rtp_ports_line)
                 if p:
                     self.client_rtp_port = int(p.group(1))
-            log("== Sink-RTP-Port:", self.client_rtp_port)
+            log("== sink RTP port:", self.client_rtp_port)
             self.state = "m4sent"
             cea = os.environ.get("IMIRA_CEA", "00000020")  # 20=720p30, 80=1080p30
             ports = (self.rtp_ports_line or
@@ -153,7 +153,7 @@ class WFDSession:
             self.send_request("SET_PARAMETER", "rtsp://localhost/wfd1.0", {},
                               "wfd_trigger_method: SETUP\r\n")
         elif self.state == "m5sent":
-            log("== M5 bestaetigt, warte auf SETUP vom Sink")
+            log("== M5 acknowledged, waiting for SETUP from the sink")
 
     def handle_request(self, method, cseq, head, body):
         if method == "OPTIONS":  # M2
@@ -192,7 +192,7 @@ class WFDSession:
                     self._last_idr_fwd = now
                     subprocess.call(["pkill", "-USR1", "-x", "imira-castd"])
         else:
-            log("?? unbekannte Methode", method)
+            log("?? unknown method", method)
             self.send_response(cseq)
 
     # ---------- Stream ----------
@@ -209,7 +209,7 @@ class WFDSession:
                    "! tsparse set-timestamps=true ! rtpmp2tpay "
                    "! udpsink host=%s port=%d bind-port=%d sync=true; done"
                    % (TS_FILE, SINK_IP, self.client_rtp_port, SERVER_RTP))
-        log("== starte RTP-Stream ->", "%s:%d" % (SINK_IP, self.client_rtp_port))
+        log("== starting RTP stream ->", "%s:%d" % (SINK_IP, self.client_rtp_port))
         self.gst = subprocess.Popen(["/bin/bash", "-c", cmd])
 
     def stop_stream(self):
@@ -221,21 +221,42 @@ class WFDSession:
             self.gst = None
 
 
+# Ein Sink, der die Gruppe steht, verbindet sich binnen Sekunden. Wartet er
+# länger, kommt er nicht mehr — dann lieber neu verbinden, als minutenlang
+# "Warte auf Empfänger" zu zeigen.
+RTSP_WAIT = int(os.environ.get("IMIRA_RTSP_WAIT", "60"))
+
+
 def main():
+    global LOCAL_IP, SINK_IP
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", RTSP_PORT))
     s.listen(1)
-    s.settimeout(600)
-    log("== warte auf RTSP-Verbindung des Sinks auf Port", RTSP_PORT)
-    conn, addr = s.accept()
-    log("== Sink verbunden:", addr)
+    s.settimeout(RTSP_WAIT)
+    log("== waiting for the sink's RTSP connection on port %d (local %s, sink %s)"
+        % (RTSP_PORT, LOCAL_IP, SINK_IP))
+    t0 = time.time()
+    try:
+        conn, addr = s.accept()
+    except socket.timeout:
+        log("!! the sink did not open an RTSP connection within %d s" % RTSP_WAIT)
+        return
+    conn.settimeout(None)
+    log("== sink connected from %s:%d after %.1f s" % (addr[0], addr[1], time.time() - t0))
+    # Die tatsächlichen Adressen dieser Verbindung gelten, nicht die aus dem
+    # Gruppen-Ereignis erschlossenen: RTP geht dorthin, woher der Sink kam.
+    local = conn.getsockname()[0]
+    if addr[0] != SINK_IP or local != LOCAL_IP:
+        log("== using connection addresses: local %s (expected %s), sink %s (expected %s)"
+            % (local, LOCAL_IP, addr[0], SINK_IP))
+    LOCAL_IP, SINK_IP = local, addr[0]
     sess = WFDSession(conn)
 
     def graceful(_sig, _frm):
         # Dem Sink ein sauberes Sitzungsende melden, sonst bleibt z.B. der
         # LG-TV minutenlang auf dem letzten Frame stehen.
-        log("== SIGTERM: sende TEARDOWN an den Sink")
+        log("== SIGTERM: sending TEARDOWN to the sink")
         try:
             sess.send_request("TEARDOWN", "rtsp://localhost/wfd1.0/streamid=0",
                               {"Session": sess.session_id})
@@ -250,7 +271,7 @@ def main():
         sess.run()
     finally:
         sess.stop_stream()
-    log("== Ende, Status:", sess.state)
+    log("== end, state:", sess.state)
 
 
 if __name__ == "__main__":

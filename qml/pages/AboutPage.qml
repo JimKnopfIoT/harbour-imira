@@ -52,6 +52,12 @@ Page {
                     + "screen recording code are derived from the aethercast "
                     + "and screencast projects.")
             }
+
+            Button {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qsTr("Diagnostics")
+                onClicked: pageStack.push(Qt.resolvedUrl("DiagnosticsPage.qml"))
+            }
         }
 
         VerticalScrollDecorator { }
