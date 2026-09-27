@@ -22,17 +22,22 @@ Page {
     // "running" = a cast is underway (scanning is not casting).
     readonly property bool running: cast.state === "starting"
                                  || cast.state === "connecting"
+                                 || cast.state === "handshake"
                                  || cast.state === "streaming"
     readonly property bool busy: cast.state === "starting"
                               || cast.state === "connecting"
+                              || cast.state === "handshake"
                               || cast.state === "scanning"
+                              || cast.state === "reporting"
 
     function stateText() {
         switch (cast.state) {
         case "starting":   return qsTr("Starting")
         case "scanning":   return qsTr("Searching for devices…")
         case "connecting": return qsTr("Connecting")
+        case "handshake":  return qsTr("Waiting for receiver")
         case "streaming":  return qsTr("Streaming")
+        case "reporting":  return qsTr("Creating diagnostic report…")
         case "error":      return qsTr("Error")
         case "nowlan":     return qsTr("WLAN is off")
         default:
@@ -65,7 +70,8 @@ Page {
                 text: qsTr("Scan for devices")
                 // Scanning tears the P2P interface away from an active cast,
                 // and a second scan on top of a running one only restarts it.
-                enabled: cast.state !== "streaming" && cast.state !== "scanning"
+                enabled: !page.running && cast.state !== "scanning"
+                         && cast.state !== "reporting"
                 onClicked: cast.scan()
             }
         }
@@ -127,6 +133,31 @@ Page {
                 text: qsTr("Target: %1").arg(cast.targetName)
             }
 
+            // The phone has one radio. If its Wi-Fi and the cast sit on two
+            // channels it has to switch back and forth, and packets get
+            // lost — measured as the main cause of dropouts. Only while a
+            // cast is running and only when it applies.
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                visible: page.running
+                         && (cast.radioMode === "dfs" || cast.radioMode === "hop")
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.secondaryHighlightColor
+                text: cast.radioMode === "dfs"
+                      //: %1 = frequency of the phone's Wi-Fi in MHz
+                      ? qsTr("Your Wi-Fi uses a radar channel (%1 MHz) that the cast cannot share. "
+                             + "This can cause dropouts: use a 2.4 GHz network or disconnect "
+                             + "from Wi-Fi while casting.").arg(cast.wifiMhz)
+                      //: %1 = receiver's channel, %2 = phone's Wi-Fi, both in MHz
+                      : qsTr("The receiver chose another channel (%1 MHz) than your Wi-Fi "
+                             + "(%2 MHz). This can cause dropouts: disconnect from Wi-Fi "
+                             + "while casting if picture or sound break up.")
+                            .arg(cast.castMhz).arg(cast.wifiMhz)
+            }
+
             Button {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: page.running ? qsTr("Stop casting") : qsTr("Start casting")
@@ -134,6 +165,7 @@ Page {
                 // usable and at least one receiver is actually known.
                 enabled: page.running
                        || (cast.state !== "scanning" && cast.state !== "nowlan"
+                           && cast.state !== "reporting"
                            && cast.devices.length > 0)
                 onClicked: page.running ? cast.stop() : cast.start()
             }

@@ -94,7 +94,15 @@ public:
     bool packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
                         std::vector<uint8_t> &out);
 
+    // Presentation delay added to every PTS, video and audio alike (lip
+    // sync stays). A live source's samples always reach the sink after
+    // their capture time — measured with the silencing sink's monitor: half
+    // of the audio 93 ms late, the worst 280 ms — and a sink drops what
+    // arrives after its presentation time: the sound stutters.
+    void setPresentationDelayUs(int64_t us) { presentation_delay_us_ = us; }
+
 private:
+    int64_t presentation_delay_us_ = 0;
     void initCrcTable();
     uint32_t calcCrc32(const uint8_t *start, size_t size) const;
     void finalizeTrack();

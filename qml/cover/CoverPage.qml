@@ -14,6 +14,7 @@ CoverBackground {
 
     readonly property bool running: cast.state === "starting"
                                  || cast.state === "connecting"
+                                 || cast.state === "handshake"
                                  || cast.state === "streaming"
 
     function stateText() {
@@ -21,6 +22,7 @@ CoverBackground {
         case "starting":   return qsTr("Starting")
         case "scanning":   return qsTr("Scanning")
         case "connecting": return qsTr("Connecting")
+        case "handshake":  return qsTr("Waiting for receiver")
         case "streaming":  return qsTr("Streaming")
         case "error":      return qsTr("Error")
         case "nowlan":     return qsTr("WLAN off")

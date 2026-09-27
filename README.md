@@ -99,6 +99,34 @@ rough edge: playing videos in the Gallery **while casting** can crash the
 Gallery's playback (hardware encoder and decoder share the video core; the
 droid stack does not always survive that — other players cope better).
 
+**Your receiver does not work?** Open *About → Diagnostics*, switch on the
+detailed log, try a cast, then create a report. It is anonymized (MAC
+addresses cut to the maker part, names of other devices and networks
+removed), saved in *Documents* and can be copied straight into an issue or a
+forum post. It tells far more than any description of the symptoms.
+
+## For smooth casting: mind your Wi-Fi
+
+The phone has **one** radio. While casting it talks to the receiver over
+Wi-Fi Direct; if it is also connected to your Wi-Fi network on a
+*different* channel, it has to hop back and forth between the two, and
+while it listens to the router the receiver gets nothing. That is heard as
+dropouts and seen as a stuttering or black picture — measured as the main
+cause of both.
+
+- **Best:** no Wi-Fi connection while casting (Wi-Fi switched on, but not
+  connected to a network). The cast has the radio to itself, and the
+  receiver picks its channel, typically 5 GHz with plenty of bandwidth.
+- **Fine:** a **2.4 GHz** network, or a 5 GHz network on channels 36–48 or
+  149–165. Imira asks the receiver for exactly that channel, so both share
+  it and the radio never has to hop.
+- **Avoid:** 5 GHz networks on the radar (DFS) channels 52–144. Wi-Fi Direct
+  may not use them, so the cast cannot share the channel. The app shows a
+  hint when this happens.
+
+If your router offers both bands, connect the phone to its 2.4 GHz network
+while casting — or disconnect.
+
 ## Where this is heading: convergence
 
 This project owes its direction to **Ubuntu Touch**. Years ago, Canonical's

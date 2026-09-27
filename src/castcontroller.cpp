@@ -27,6 +27,10 @@ const auto kRotatePath  = QStringLiteral("/tmp/imira-rotate");
 const auto kResPath     = QStringLiteral("/tmp/imira-res");
 const auto kAudioOffPath = QStringLiteral("/tmp/imira-audio-offset");
 const auto kModePath    = QStringLiteral("/tmp/imira-mode");
+const auto kDebugFlag   = QStringLiteral("/tmp/imira-debug");
+const auto kReportReq   = QStringLiteral("/tmp/imira-report-request");
+const auto kReportDone  = QStringLiteral("/tmp/imira-report-done");
+const auto kRadioPath   = QStringLiteral("/tmp/imira-radio");
 
 // Touch an empty flag file. Nothing to write — the file's existence is the
 // message; the service removes it once acted upon.
@@ -193,6 +197,40 @@ void CastController::setConvergence(bool on)
         m_convergence = on;
         emit statusChanged();
     }
+}
+
+void CastController::setDebugLog(bool on)
+{
+    // Takes effect when the service next starts its supplicant (next cast,
+    // scan or report); it removes the flag itself once a report is done.
+    if (on)
+        touchFlag(kDebugFlag);
+    else
+        QFile::remove(kDebugFlag);
+    if (m_debugLog != on) {
+        m_debugLog = on;
+        emit diagnosticsChanged();
+    }
+}
+
+void CastController::createReport(bool survey)
+{
+    QFile::remove(kReportDone);
+    QFile f(kReportReq);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(survey ? "survey\n" : "\n");
+    if (!m_reportPath.isEmpty()) {
+        m_reportPath.clear();
+        emit diagnosticsChanged();
+    }
+}
+
+QString CastController::reportText() const
+{
+    QFile f(m_reportPath);
+    if (m_reportPath.isEmpty() || !f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QString();
+    return QString::fromUtf8(f.readAll());
 }
 
 namespace {
@@ -459,6 +497,27 @@ void CastController::poll()
         convergence = QString::fromUtf8(mf.readLine()).trimmed()
                       == QLatin1String("convergence");
 
+    // Radio situation: "<mode> <wifi-mhz> <cast-mhz>".
+    QString radioMode;
+    int wifiMhz = 0, castMhz = 0;
+    QFile radf(kRadioPath);
+    if (radf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QStringList rp = QString::fromUtf8(radf.readLine())
+                                   .simplified().split(QLatin1Char(' '));
+        if (rp.size() >= 3) {
+            radioMode = rp.at(0);
+            wifiMhz = rp.at(1).toInt();
+            castMhz = rp.at(2).toInt();
+        }
+    }
+
+    if (radioMode != m_radioMode || wifiMhz != m_wifiMhz || castMhz != m_castMhz) {
+        m_radioMode = radioMode;
+        m_wifiMhz = wifiMhz;
+        m_castMhz = castMhz;
+        emit statusChanged();
+    }
+
     if (state != m_state || frames != m_frames || attempts != m_attempts
             || iface != m_iface || targetName != m_targetName
             || rotationMode != m_rotationMode || fullHd != m_fullHd
@@ -474,6 +533,21 @@ void CastController::poll()
         m_audioOffsetMs = audioOffsetMs;
         m_convergence = convergence;
         emit statusChanged();
+    }
+
+    // --- diagnostics -------------------------------------------------------
+    const bool debugLog = QFile::exists(kDebugFlag);
+    QString reportPath;
+    QFile rdf(kReportDone);
+    if (rdf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        reportPath = QString::fromUtf8(rdf.readLine()).trimmed();
+        if (!QFile::exists(reportPath))
+            reportPath.clear();
+    }
+    if (debugLog != m_debugLog || reportPath != m_reportPath) {
+        m_debugLog = debugLog;
+        m_reportPath = reportPath;
+        emit diagnosticsChanged();
     }
 
     // --- device list: one peer per line, "mac<TAB>wfd<TAB>name" ------------

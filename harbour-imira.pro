@@ -50,6 +50,7 @@ DISTFILES += \
     qml/cover/CoverPage.qml \
     qml/pages/MainPage.qml \
     qml/pages/AboutPage.qml \
+    qml/pages/DiagnosticsPage.qml \
     qml/pages/TvAppsPage.qml \
     qml/pages/TvViewPage.qml \
     rpm/harbour-imira.spec \

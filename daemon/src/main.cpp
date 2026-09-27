@@ -105,7 +105,25 @@ int main(int argc, char **argv)
     }
 
     TsMux mux;
+    // 150 ms: measured on the J2, 99.8 % of the audio reaches the sink within
+    // that (the silencing sink renders ahead in blocks); 300 ms made the LG
+    // show black. "delayNNN" in the flags file overrides it for tests.
+    int presentationDelayMs = 150;
+    // Test switch "fpsNN" in /tmp/imira-castd-flags: cap the frame rate
+    // (less capture/convert load on the phone). Read before anything uses it.
+    if (FILE *ff = fopen("/tmp/imira-castd-flags", "r")) {
+        char w[64];
+        while (fscanf(ff, "%63s", w) == 1)
+            if (!strncmp(w, "fps", 3) && atoi(w + 3) >= 5 && atoi(w + 3) <= 60)
+                opt.fps = atoi(w + 3);
+            else if (!strncmp(w, "delay", 5) && atoi(w + 5) >= 0 && atoi(w + 5) <= 1000)
+                presentationDelayMs = atoi(w + 5);
+        fclose(ff);
+    }
     mux.addH264Track(opt.width, opt.height, opt.fps, 1);
+    mux.setPresentationDelayUs((int64_t)presentationDelayMs * 1000);
+    if (presentationDelayMs)
+        fprintf(stderr, "imira-castd: presentation delay %d ms\n", presentationDelayMs);
     const char *audioSrcEnv = getenv("IMIRA_AUDIO_SOURCE");
     const bool audioOn = !(audioSrcEnv && std::string(audioSrcEnv) == "off");
     if (audioOn)
@@ -122,6 +140,30 @@ int main(int argc, char **argv)
     if (const char *p = getenv("IMIRA_DUMP_TS"))
         dumpTs = fopen(p, "wb");
     int logged = 0;
+    // Test switches for the 0.10.4 transport changes, read once at start
+    // from /tmp/imira-castd-flags (words: "noslice", "noclock"). They exist
+    // to take one change out at a time on a device, without a rebuild.
+    bool noSlice = false, noClock = false;
+    int nudgeMs = 0;    // 0 = one frame period (default since 0.10.4)
+    if (FILE *ff = fopen("/tmp/imira-castd-flags", "r")) {
+        char w[64];
+        while (fscanf(ff, "%63s", w) == 1) {
+            if (!strcmp(w, "noslice")) noSlice = true;
+            if (!strcmp(w, "noclock")) noClock = true;
+            if (!strncmp(w, "nudge", 5)) nudgeMs = atoi(w + 5);  // e.g. nudge100
+        }
+        fclose(ff);
+    }
+    if (noSlice || noClock || nudgeMs || opt.fps != 30)
+        fprintf(stderr, "imira-castd: test switches:%s%s nudge=%d ms fps=%d\n",
+                noSlice ? " noslice" : "", noClock ? " noclock" : "", nudgeMs,
+                opt.fps);
+    // What comes OUT of the encoder, next to what goes in (frames): a
+    // restarted hardware encoder that falls silent is otherwise invisible —
+    // the frame counter keeps climbing and the sink just shows black.
+    std::atomic<long> ausOut{0}, idrsOut{0}, bytesOut{0};
+    // After an encoder restart, log its first access units again.
+    std::atomic<int> logAfterRestart{0};
 
     H264Encoder enc;
     bool ok = enc.init(opt.width, opt.height, opt.fps, opt.bitrate,
@@ -136,7 +178,14 @@ int main(int argc, char **argv)
                 idr = (nal == 7 || nal == 5);
             }
             std::unique_lock<std::mutex> l(sendLock);
-            if (logged < 6) {
+            ausOut++;
+            if (idr)
+                idrsOut++;
+            bytesOut += size;
+            bool again = logAfterRestart.load() > 0;
+            if (again)
+                logAfterRestart--;
+            if (logged < 6 || again) {
                 fprintf(stderr,
                         "imira-castd: AU size=%zu pts=%lld idr=%d cfg=%d "
                         "head=%02x%02x%02x%02x%02x%02x\n",
@@ -172,7 +221,8 @@ int main(int argc, char **argv)
                 // third of a megabyte at once. Sent as one block it pushes
                 // every audio packet behind it, and that is what the sink
                 // stutters on. Sliced, the sound keeps its turn.
-                const size_t kSlice = 188 * 7 * 32;   // about 42 kB
+                const size_t kSlice = noSlice ? ts.size()
+                                              : 188 * 7 * 32;   // about 42 kB
                 for (size_t off = 0; off < ts.size(); off += kSlice) {
                     const size_t n = ts.size() - off < kSlice ? ts.size() - off
                                                               : kSlice;
@@ -229,6 +279,7 @@ int main(int argc, char **argv)
     // nudge again, and the extra frame is discarded in turn.
     std::atomic<int64_t> lastFrameUs{0};
     std::atomic<long> frames{0}, drops{0};
+    std::atomic<int64_t> maxGapUs{0};
     // Convergence mode (IMIRA_INPUT=shm): frames come from imira-comp's
     // virtual TV screen instead of the lipstick recorder — the phone UI
     // stays interactive and is NOT mirrored.
@@ -286,6 +337,7 @@ int main(int argc, char **argv)
         if (pw) {
             int ph = pendingH.load(), pb = pendingBr.load();
             fprintf(stderr, "imira-castd: switching to %dx%d @%d\n", pw, ph, pb);
+            logAfterRestart = 4;
             if (enc.restartWith(pw, ph, pb)) {
                 conv.configure(pw, ph, enc.inputFormat() == H264Encoder::NV12);
                 opt.width = pw;
@@ -294,9 +346,14 @@ int main(int argc, char **argv)
                 fprintf(stderr, "imira-castd: resolution switch FAILED\n");
             }
         } else if (g_needIdr.exchange(false)) {
-            fprintf(stderr, "imira-castd: IDR requested, restarting encoder\n");
+            fprintf(stderr, "imira-castd: [%s] IDR requested, restarting encoder\n",
+                    stamp());
+            logAfterRestart = 4;
+            const int64_t r0 = nowUs();
             if (!enc.restart())
                 fprintf(stderr, "imira-castd: encoder restart FAILED\n");
+            fprintf(stderr, "imira-castd: encoder restart took %lld ms\n",
+                    (long long)((nowUs() - r0) / 1000));
         }
         int ovr = overrideRotation.load();
         int rot = 0;
@@ -308,6 +365,12 @@ int main(int argc, char **argv)
                                       &size);
         if (!frame)
             return;
+        {
+            // Largest gap between two frames handed to the encoder (stats).
+            const int64_t prev = lastQueuedUs.load();
+            if (prev && t - prev > maxGapUs.load())
+                maxGapUs = t - prev;
+        }
         lastQueuedUs = t;
         frames++;
         // droidmedia takes microseconds in (MediaCodec convention) but
@@ -344,9 +407,10 @@ int main(int argc, char **argv)
             // that tie their audio output to the video clock stumble over
             // that, and it is heard as stuttering SOUND. A still picture
             // costs the encoder almost nothing, so the nudge is cheap.
-            if (!shmInput && t - lastFrameUs.load() > frameIntervalUs)
+            if (!shmInput && t - lastFrameUs.load()
+                                 > (nudgeMs ? nudgeMs * 1000LL : frameIntervalUs))
                 rec.requestRepaint();
-            if (t - lastPatUs.load() <= 80000)
+            if (noClock || t - lastPatUs.load() <= 80000)
                 continue;
             std::vector<uint8_t> ts;
             std::lock_guard<std::mutex> l(sendLock);
@@ -399,9 +463,21 @@ int main(int argc, char **argv)
             pendingBr = wantBr;
             pendingW = wantW; // last: acts as the "ready" flag
         }
+        {
+            static int lastRot = -1;
+            const int r = sensorRotation.load();
+            if (r != lastRot) {
+                fprintf(stderr, "imira-castd: [%s] sensor rotation %d\n",
+                        stamp(), r);
+                lastRot = r;
+            }
+        }
         if (t - lastStats > 5000000) {
-            fprintf(stderr, "imira-castd: [%s] %ld frames (%ld dropped)\n",
-                    stamp(), frames.load(), drops.load());
+            fprintf(stderr, "imira-castd: [%s] %ld frames (%ld dropped), "
+                    "encoder out %ld AUs (%ld IDR, %ld kB), max frame gap %lld ms\n",
+                    stamp(), frames.load(), drops.load(), ausOut.load(),
+                    idrsOut.load(), bytesOut.load() / 1024,
+                    (long long)(maxGapUs.exchange(0) / 1000));
             lastStats = t;
         }
     }

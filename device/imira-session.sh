@@ -10,10 +10,23 @@ CTRL=/var/run/wpa_imira
 PIDF=/var/run/imira-wpa.pid
 WPALOG=/tmp/imira-wpa.log
 STATUS=/tmp/imira-status
+CLOG=/tmp/imira-connect.log
+PLOG=/tmp/imira-proto.log
+DEBUGF=/tmp/imira-debug        # von der App (Diagnose-Seite): Supplicant mit -d
 IFACE=""
 ATTEMPTS=0
 
 status() { echo "$1 ${2:-0} ${ATTEMPTS} ${IFACE:--}" > "$STATUS"; }
+
+# Protokoll für Fremd-Berichte: englisch, mit Datum/Uhrzeit.
+clog() { echo "$(date '+%F %T') $*" >> "$CLOG"; }
+
+cap_log() {
+    # /tmp liegt im RAM: Logs auf die letzten $2 Bytes kürzen.
+    [ -f "$1" ] || return 0
+    [ "$(stat -c %s "$1" 2>/dev/null || echo 0)" -gt "$2" ] || return 0
+    tail -c "$2" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
 
 radio_off() {
     # WLAN-Schalter der Einstellungen = rfkill über den ganzen Chip.
@@ -62,7 +75,15 @@ prep_iface() {
     fi
 }
 
+wpa_mode() { [ -e "$DEBUGF" ] && echo debug || echo normal; }
+
 ensure_supplicant() {
+    # Läuft er im falschen Log-Modus (Schalter seither umgelegt), neu starten.
+    if [ "$(cat /var/run/imira-wpa.mode 2>/dev/null)" != "$(wpa_mode)" ]; then
+        [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null
+        rm -f "$PIDF"
+        sleep 1
+    fi
     if ! "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" ping >/dev/null 2>&1; then
         [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null
         sleep 1
@@ -80,10 +101,20 @@ ensure_supplicant() {
         # Eigenes Logfile statt Syslog: journald ist auf manchen Geräten
         # winzig und ratenbegrenzt (J2: volatile, 1 MB, Burst 300) — dort
         # gingen Ereignisse wie P2P-GROUP-STARTED unbemerkt verloren.
+        # Zwei Generationen aufheben: ein Scan nach einem gescheiterten Cast
+        # startet einen neuen Supplicant — dessen Log darf den Befund nicht
+        # überschreiben, sonst fehlt er im Diagnosebericht.
+        [ -f "$WPALOG.1" ] && mv -f "$WPALOG.1" "$WPALOG.2"
+        [ -s "$WPALOG" ] && mv -f "$WPALOG" "$WPALOG.1"
         : > "$WPALOG"
-        "$LIBEXEC/wpa_supplicant-p2p" -Dnl80211 -i "$IFACE" -c /etc/imira/wpa.conf \
+        # -t: Zeitstempel; -d nur auf Wunsch (Diagnose-Seite), dann stehen
+        # auch die Begründungen drin (z.B. warum p2p_connect FAIL sagt).
+        WPAOPT="-t"
+        [ "$(wpa_mode)" = "debug" ] && WPAOPT="-t -d"
+        "$LIBEXEC/wpa_supplicant-p2p" -Dnl80211 -i "$IFACE" -c /etc/imira/wpa.conf $WPAOPT \
             >> "$WPALOG" 2>&1 &
         echo $! > "$PIDF"
+        wpa_mode > /var/run/imira-wpa.mode
         sleep 2
         W="$LIBEXEC/wpa_cli-p2p -p $CTRL -i $IFACE"
         $W ping >/dev/null 2>&1 || return 1
@@ -128,7 +159,76 @@ app_gone() {
 
 frames_of() {
     # Frame-Zähler aus dem castd-Log der laufenden Session ziehen.
-    grep -oE "[0-9]+ frames" /tmp/imira-proto.log 2>/dev/null | tail -1 | cut -d" " -f1
+    grep -oE "[0-9]+ frames" "$PLOG" 2>/dev/null | tail -1 | cut -d" " -f1
+}
+
+peer_line() {
+    # Wie imira-connect.sh: alles Diagnostisch-Relevante eines Peers auf
+    # einer Zeile, ohne serial_number.
+    $W p2p_peer "$1" 2>/dev/null | grep -E "^(device_name|manufacturer|model_name|model_number|pri_dev_type|config_methods|dev_capab|group_capab|flags|level|listen_freq|oper_freq|interface_addr|member_in_go_dev|wfd_subelems)=" \
+        | tr '\n' ' '
+}
+
+net_check() {
+    # Nach dem Gruppenstart: Liegt die Adresse richtig, führt die Route
+    # zum Sink übers Gruppen-Interface, antwortet er überhaupt?
+    clog "net: $(ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $2, $4}' | tr '\n' ' ')"
+    clog "net: route to sink: $(ip route get "$2" 2>/dev/null | head -1)"
+    if ping -c 1 -W 2 "$2" >/dev/null 2>&1; then
+        clog "net: sink $2 answers ping"
+    else
+        clog "net: sink $2 does not answer ping (may just block ICMP)"
+    fi
+}
+
+diag_scan() {
+    # Aktive Prüfung für den Diagnosebericht: ~15 s nach Peers suchen und
+    # alles festhalten, was jeder über sich verrät — auch wenn der Nutzer
+    # nie bis zum Casten kommt.
+    local out=/tmp/imira-diag-scan.log
+    {
+        echo "$(date '+%F %T') diagnostic scan on $IFACE"
+        W="$LIBEXEC/wpa_cli-p2p -p $CTRL -i $IFACE"
+        if ! ensure_supplicant; then
+            echo "supplicant did not start"
+        else
+            echo "p2p status: $($W status 2>/dev/null | grep -E '^(p2p_state|wpa_state|p2p_device_address)=' | tr '\n' ' ')"
+            $W p2p_find >/dev/null
+            sleep 15
+            N=0
+            for a in $($W p2p_peers 2>/dev/null); do
+                N=$((N + 1))
+                SUB=$($W p2p_peer "$a" 2>/dev/null | grep -m1 "^wfd_subelems=" | cut -d= -f2-)
+                if is_sink "$SUB"; then K=sink; else K=other; fi
+                echo "peer $a [$K]: $(peer_line "$a")"
+            done
+            echo "$N peer(s) found"
+            $W p2p_stop_find >/dev/null 2>&1
+        fi
+    } > "$out" 2>&1
+    stop_supplicant
+}
+
+do_report() {
+    # Diagnosebericht auf Wunsch der App. Die Anfrage-Datei enthält die
+    # Optionen ("survey" = Funkumgebung einbeziehen).
+    local opts
+    opts=$(cat /tmp/imira-report-request 2>/dev/null)
+    rm -f /tmp/imira-report-request /tmp/imira-report-done
+    status reporting
+    if radio_off; then
+        echo "$(date '+%F %T') WLAN is off, no diagnostic scan" > /tmp/imira-diag-scan.log
+    else
+        pick_iface
+        prep_iface
+        diag_scan
+    fi
+    IMIRA_REPORT_OPTS="$opts" python3 "$LIBEXEC/imira-report.py" > /tmp/imira-report-done.new 2>/tmp/imira-report.err
+    mv -f /tmp/imira-report-done.new /tmp/imira-report-done
+    chmod 644 /tmp/imira-report-done
+    # Das ausführliche Log war für diesen Bericht; danach wieder schlank.
+    rm -f "$DEBUGF"
+    status idle
 }
 
 scan_once() {
@@ -182,6 +282,11 @@ while true; do
         if app_gone && [ "$SECONDS" -gt 15 ]; then
             exit 0
         fi
+        # Bericht auch bei ausgeschaltetem WLAN (dann ohne Scan).
+        if [ -e /tmp/imira-report-request ]; then
+            do_report
+            continue
+        fi
         if radio_off; then
             status nowlan
             rm -f /tmp/imira-scan
@@ -201,12 +306,18 @@ while true; do
         sleep 2
         continue
     fi
-    rm -f /tmp/imira-stop /tmp/imira-target
+    rm -f /tmp/imira-stop /tmp/imira-target /tmp/imira-radio
     ATTEMPTS=0
     pick_iface
     prep_iface
     status starting
+    cap_log "$CLOG" 262144
+    clog "=== cast start: imira $(rpm -q --qf '%{VERSION}-%{RELEASE}' harbour-imira 2>/dev/null)," \
+         "iface $IFACE, mode $(cat /tmp/imira-mode 2>/dev/null || echo mirror)," \
+         "res $(cat /tmp/imira-res 2>/dev/null || echo 1080), wpa log $(wpa_mode)," \
+         "peer $(cat /tmp/imira-peer 2>/dev/null || echo auto)"
     if ! ensure_supplicant; then
+        clog "wpa_supplicant did not start on $IFACE"
         status error
         sleep 5
         continue
@@ -217,11 +328,11 @@ while true; do
     FAILS=0
     while [ -e /tmp/imira-start ] && [ ! -e /tmp/imira-stop ]; do
         if app_gone; then
-            echo "app beendet — session wird gestoppt" >> /tmp/imira-connect.log
+            clog "app closed, stopping session"
             break
         fi
         if [ "$FAILS" -ge 3 ]; then
-            echo "3 Fehlversuche in Folge — gebe auf" >> /tmp/imira-connect.log
+            clog "3 failed attempts in a row, giving up"
             break
         fi
         for d in /proc/[0-9]*; do
@@ -233,8 +344,16 @@ while true; do
         # Interface, dessen Name erst im Ereignis steht.
         $W p2p_group_remove '*' >/dev/null 2>&1
         status connecting
-        : > /tmp/imira-proto.log
+        # Frühere Handshakes dieser Sitzung nicht wegwerfen — sie landen in
+        # der Historie (Diagnosebericht), proto.log selbst bleibt pro Versuch
+        # (frames_of liest nur den laufenden).
+        if [ -s "$PLOG" ]; then
+            cat "$PLOG" >> /tmp/imira-proto.prev.log
+            cap_log /tmp/imira-proto.prev.log 262144
+        fi
+        : > "$PLOG"
         ATTEMPTS=$((ATTEMPTS + 1))
+        clog "session attempt $ATTEMPTS"
         # Auflösung aus der App-Einstellung (wirkt pro Session): 720 oder 1080.
         RES=$(cat /tmp/imira-res 2>/dev/null)
         if [ "$RES" = "720" ]; then
@@ -251,7 +370,7 @@ while true; do
         [ "$IFACE" = "wlan1" ] && FREQ=2437   # nur die Alfa braucht den Zwang
         IPS=$(IMIRA_IFACE="$IFACE" IMIRA_CTRL="$CTRL" IMIRA_WPA_LOG="$WPALOG" \
               IMIRA_ATTEMPTS=4 IMIRA_PEER="$PEER" IMIRA_FREQ="$FREQ" \
-              "$LIBEXEC/imira-connect.sh" 2>>/tmp/imira-connect.log)
+              "$LIBEXEC/imira-connect.sh" 2>>"$CLOG")
         if [ -z "$IPS" ]; then
             FAILS=$((FAILS + 1))
             status error
@@ -264,25 +383,53 @@ while true; do
         GIF=$1
         MY=$2
         GO=$3
+        PFX=${4:-24}
         # Die Sitzungsadresse gehört ausschließlich auf das Gruppen-Interface.
         # Ein Rest von früher — etwa auf p2p0, als die Gruppe noch dort lief —
         # kapert sonst die Route auf ein totes Interface: der Sink verbindet
         # sich, bekommt keine Antwort und wirft die Gruppe nach 15 s weg.
         [ "$IFACE" != "$GIF" ] && ip -4 addr flush dev "$IFACE" 2>/dev/null
         ip -4 addr flush dev "$GIF" 2>/dev/null
-        ip addr add "$MY/24" dev "$GIF" 2>/dev/null
+        ip addr add "$MY/$PFX" dev "$GIF" 2>/dev/null
+        net_check "$GIF" "$GO"
         IMIRA_LOCAL_IP="$MY" IMIRA_SINK_IP="$GO" \
         IMIRA_STREAM_CMD="$LIBEXEC/run-castd.sh {ip} {port}" \
-            python3 "$LIBEXEC/imira-wfd-proto.py" >> /tmp/imira-proto.log 2>&1 &
+            python3 "$LIBEXEC/imira-wfd-proto.py" >> "$PLOG" 2>&1 &
         PROTO=$!
-        status streaming
+        # "streaming" erst, wenn wirklich Bilder rausgehen (castd meldet
+        # "N frames" erst nach PLAY). Vorher steht die Gruppe zwar, aber
+        # der Sink hat die Sitzung noch nicht aufgebaut — früher hieß das
+        # schon "streaming", und der Bildschirm blieb schwarz.
+        T0=$SECONDS
+        NEIGH_LOGGED=0
+        F=0
         while kill -0 "$PROTO" 2>/dev/null; do
             [ -e /tmp/imira-stop ] && break
             app_gone && break
-            status streaming "$(frames_of)"
+            F=$(frames_of)
+            if [ "${F:-0}" -gt 0 ]; then
+                status streaming "$F"
+            else
+                status handshake
+                if [ "$NEIGH_LOGGED" = 0 ] && [ $((SECONDS - T0)) -ge 15 ] \
+                        && ! grep -q "sink connected" "$PLOG"; then
+                    # Hat der Sink uns wenigstens per ARP gesucht? Dann kennt
+                    # er eine Adresse, erreicht aber den RTSP-Port nicht.
+                    NEIGH_LOGGED=1
+                    clog "no RTSP connection from the sink after 15 s"
+                    clog "net: neighbours on $GIF: $(ip neigh show dev "$GIF" 2>/dev/null | tr '\n' ';')"
+                fi
+            fi
             sleep 2
         done
         kill "$PROTO" 2>/dev/null
+        clog "session attempt $ATTEMPTS ended after $((SECONDS - T0)) s, ${F:-0} frames sent"
+        # Ohne ein einziges gesendetes Bild zählt die Sitzung als Fehlversuch —
+        # sonst verbindet sie endlos neu, ohne dass je etwas ankommt.
+        if [ "${F:-0}" -eq 0 ] && [ ! -e /tmp/imira-stop ] && ! app_gone; then
+            FAILS=$((FAILS + 1))
+            status error
+        fi
         sleep 2
     done
 
@@ -299,6 +446,7 @@ while true; do
     [ -n "$MID" ] && su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl unload-module $MID" 2>/dev/null
     "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" p2p_group_remove '*' >/dev/null 2>&1
     stop_supplicant
-    rm -f /tmp/imira-start /tmp/imira-target
+    clog "=== cast stopped"
+    rm -f /tmp/imira-start /tmp/imira-target /tmp/imira-radio
     status idle
 done

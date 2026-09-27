@@ -11,9 +11,18 @@
 
   Status file format, one line: "state frames attempts iface", e.g.
       streaming 1843 2 wlan1
-  state is one of idle/starting/scanning/connecting/streaming/error. Missing
+  state is one of idle/starting/scanning/connecting/handshake/streaming/
+  reporting/error/nowlan ("handshake": Wi-Fi Direct is up, but no frame has
+  gone out yet; "streaming" only once frames flow). Missing
   file or a malformed line reads as idle — the service simply is not running
   yet.
+
+  Diagnostics (DiagnosticsPage): /tmp/imira-debug (flag) makes the service
+  run its wpa_supplicant with -d from the next start on; /tmp/imira-report-
+  request (contents: options, e.g. "survey") asks for a report. The service
+  shows state "reporting" while it scans and collects, then writes the path
+  of the anonymized report in ~/Documents to /tmp/imira-report-done and
+  removes the debug flag again.
 
   Device discovery works the same way: /tmp/imira-scan (flag, written here)
   asks the service for a ~12 s P2P scan (state goes "scanning" meanwhile);
@@ -65,6 +74,18 @@ class CastController : public QObject
     // htop, scoped to convergence: per-process {name, cpu} of compositor,
     // encoder and every TV app, sorted by load.
     Q_PROPERTY(QVariantList tvProcs READ tvProcs NOTIFY statusChanged)
+    // Diagnostics: detailed supplicant log for the next cast, and the path
+    // of the last report ("" = none yet).
+    Q_PROPERTY(bool debugLog READ debugLog NOTIFY diagnosticsChanged)
+    Q_PROPERTY(QString reportPath READ reportPath NOTIFY diagnosticsChanged)
+    // Radio situation of the running cast (/tmp/imira-radio, written by the
+    // service): "" (unknown/none), "alone", "shared", "hop" (the receiver
+    // took another channel than the phone's Wi-Fi) or "dfs" (the phone's
+    // Wi-Fi is on a radar channel the cast cannot share). With hop/dfs the
+    // one radio has to switch between two channels, which costs packets.
+    Q_PROPERTY(QString radioMode READ radioMode NOTIFY statusChanged)
+    Q_PROPERTY(int wifiMhz READ wifiMhz NOTIFY statusChanged)
+    Q_PROPERTY(int castMhz READ castMhz NOTIFY statusChanged)
 
 public:
     explicit CastController(QObject *parent = nullptr);
@@ -90,6 +111,11 @@ public:
     Q_INVOKABLE void setFullHd(bool on);
     Q_INVOKABLE void setAudioOffset(int ms);
     Q_INVOKABLE void setConvergence(bool on);
+    Q_INVOKABLE void setDebugLog(bool on);
+    // survey = also describe the radio environment (channels in use).
+    Q_INVOKABLE void createReport(bool survey);
+    // Whole report as text, for the clipboard.
+    Q_INVOKABLE QString reportText() const;
 
     // The TV dock's app selection. installedApps lists every launcher app
     // as {id, name, icon}; tvApps/setTvApps read and write the selection
@@ -109,10 +135,16 @@ public:
     QStringList tvWindows() const { return m_tvWindows; }
     int tvLoad() const { return m_tvLoad; }
     QVariantList tvProcs() const { return m_tvProcs; }
+    bool debugLog() const { return m_debugLog; }
+    QString reportPath() const { return m_reportPath; }
+    QString radioMode() const { return m_radioMode; }
+    int wifiMhz() const { return m_wifiMhz; }
+    int castMhz() const { return m_castMhz; }
 
 signals:
     void statusChanged();
     void devicesChanged();
+    void diagnosticsChanged();
 
 private slots:
     void poll();
@@ -137,6 +169,11 @@ private:
     QStringList m_tvWindows;
     int     m_tvLoad = 0;
     QVariantList m_tvProcs;
+    bool    m_debugLog = false;
+    QString m_reportPath;
+    QString m_radioMode;
+    int     m_wifiMhz = 0;
+    int     m_castMhz = 0;
     QHash<qint64, qulonglong> m_lastJiffies;
     qint64  m_lastJiffiesMs = 0;
 };
