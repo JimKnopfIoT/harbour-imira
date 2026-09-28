@@ -81,6 +81,20 @@ prep_iface() {
     fi
 }
 
+remove_stale_groups() {
+    # Gruppen-Interfaces eines früheren Supplicants (p2p-p2p0-N), die bei
+    # dessen Ende liegen geblieben sind. Der MediaTek-Treiber des J2 erlaubt
+    # nur zwei zusätzliche Interfaces; sind sie belegt, scheitert jedes
+    # connect sofort mit "Failed to create interface p2p-p2p0-0: -22".
+    # Nur aufrufen, solange kein Supplicant von uns läuft.
+    local d n
+    for d in /sys/class/net/p2p-"$IFACE"-*; do
+        [ -e "$d" ] || continue
+        n=${d##*/}
+        iw dev "$n" del 2>/dev/null && clog "removed leftover group interface $n"
+    done
+}
+
 wpa_mode() { [ -e "$DEBUGF" ] && echo debug || echo normal; }
 
 ensure_supplicant() {
@@ -104,6 +118,7 @@ ensure_supplicant() {
         # anlegen können: /etc/imira/no-group-iface anlegen.
         [ -e /etc/imira/no-group-iface ] && \
             echo "p2p_no_group_iface=1" >> /etc/imira/wpa.conf
+        remove_stale_groups
         # Eigenes Logfile statt Syslog: journald ist auf manchen Geräten
         # winzig und ratenbegrenzt (J2: volatile, 1 MB, Burst 300) — dort
         # gingen Ereignisse wie P2P-GROUP-STARTED unbemerkt verloren.
@@ -429,6 +444,9 @@ while true; do
             sleep 2
         done
         kill "$PROTO" 2>/dev/null
+        # castd meldet den Zähler nur alle 5 s — nach dem Schleifenende noch
+        # einmal lesen, sonst stehen kurze Sitzungen mit 0 Bildern im Log.
+        F=$(frames_of)
         clog "session attempt $ATTEMPTS ended after $(($(uptime_s) - T0)) s, ${F:-0} frames sent"
         # Ohne ein einziges gesendetes Bild zählt die Sitzung als Fehlversuch —
         # sonst verbindet sie endlos neu, ohne dass je etwas ankommt.

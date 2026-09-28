@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.6
+Version:    0.10.7
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -157,6 +157,17 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Mon Sep 28 2026 harbour-imira contributors 0.10.7-1
+- Casting no longer fails at once with "Failed to create interface
+  p2p-p2p0-0: -22". The Wi-Fi driver of the Jolla Phone 2026 allows only
+  two extra network interfaces; interfaces left over from an earlier
+  Wi-Fi Direct group could take both, and no new group could be made.
+  They are now removed before each cast.
+- The diagnostic report lists the phone's wireless interfaces with their
+  types.
+- The connect log no longer reports 0 frames for short sessions that did
+  send pictures.
+
 * Mon Sep 28 2026 harbour-imira contributors 0.10.6-1
 - Casting works on phones as they ship. The session script counted time
   with a bash feature ($SECONDS) that the phone's default shell, busybox,
