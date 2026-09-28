@@ -16,6 +16,12 @@ DEBUGF=/tmp/imira-debug        # von der App (Diagnose-Seite): Supplicant mit -d
 IFACE=""
 ATTEMPTS=0
 
+# Sekunden seit Boot. Kein $SECONDS: /bin/bash ist auf Serien-Telefonen
+# busybox ash, das $SECONDS nicht kennt (mit set -u bricht das Skript ab).
+# Nur Entwicklergeräte mit gnu-bash hatten es.
+uptime_s() { cut -d. -f1 /proc/uptime; }
+T_START=$(uptime_s)
+
 status() { echo "$1 ${2:-0} ${ATTEMPTS} ${IFACE:--}" > "$STATUS"; }
 
 # Protokoll für Fremd-Berichte: englisch, mit Datum/Uhrzeit.
@@ -279,7 +285,7 @@ status idle
 while true; do
     if [ ! -e /tmp/imira-start ]; then
         # App weg -> Selbstbeendung (nur im Leerlauf; 15 s Anlaufgnade).
-        if app_gone && [ "$SECONDS" -gt 15 ]; then
+        if app_gone && [ $(($(uptime_s) - T_START)) -gt 15 ]; then
             exit 0
         fi
         # Bericht auch bei ausgeschaltetem WLAN (dann ohne Scan).
@@ -400,7 +406,7 @@ while true; do
         # "N frames" erst nach PLAY). Vorher steht die Gruppe zwar, aber
         # der Sink hat die Sitzung noch nicht aufgebaut — früher hieß das
         # schon "streaming", und der Bildschirm blieb schwarz.
-        T0=$SECONDS
+        T0=$(uptime_s)
         NEIGH_LOGGED=0
         F=0
         while kill -0 "$PROTO" 2>/dev/null; do
@@ -411,7 +417,7 @@ while true; do
                 status streaming "$F"
             else
                 status handshake
-                if [ "$NEIGH_LOGGED" = 0 ] && [ $((SECONDS - T0)) -ge 15 ] \
+                if [ "$NEIGH_LOGGED" = 0 ] && [ $(($(uptime_s) - T0)) -ge 15 ] \
                         && ! grep -q "sink connected" "$PLOG"; then
                     # Hat der Sink uns wenigstens per ARP gesucht? Dann kennt
                     # er eine Adresse, erreicht aber den RTSP-Port nicht.
@@ -423,7 +429,7 @@ while true; do
             sleep 2
         done
         kill "$PROTO" 2>/dev/null
-        clog "session attempt $ATTEMPTS ended after $((SECONDS - T0)) s, ${F:-0} frames sent"
+        clog "session attempt $ATTEMPTS ended after $(($(uptime_s) - T0)) s, ${F:-0} frames sent"
         # Ohne ein einziges gesendetes Bild zählt die Sitzung als Fehlversuch —
         # sonst verbindet sie endlos neu, ohne dass je etwas ankommt.
         if [ "${F:-0}" -eq 0 ] && [ ! -e /tmp/imira-stop ] && ! app_gone; then

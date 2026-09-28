@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.5
+Version:    0.10.6
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -157,6 +157,15 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Mon Sep 28 2026 harbour-imira contributors 0.10.6-1
+- Casting works on phones as they ship. The session script counted time
+  with a bash feature ($SECONDS) that the phone's default shell, busybox,
+  does not have; the service stopped right after the receiver's Wi-Fi
+  Direct connection was up, before the receiver could start the session,
+  and was restarted. For the same reason the service did not end by itself
+  after the app was closed, but was started again and again. Development
+  phones with GNU bash installed never showed it.
+
 * Sun Sep 27 2026 harbour-imira contributors 0.10.5-1
 - The picture no longer goes black after a few seconds, which it did with
   0.10.4 on the Jolla Phone 2026. The audio capture had stopped asking
