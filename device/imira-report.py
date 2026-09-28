@@ -364,6 +364,9 @@ def main():
         sec("wpa_supplicant log (%s)" % ("latest run" if i == 0 else "%d run(s) earlier" % i),
             filter_wpa(p, 3000))
     sec("wireless capabilities", iw_phy_summary())
+    # Alle WLAN-Interfaces mit Typ, auch fremde Namen: Der J2-Treiber erlaubt
+    # nur zwei zusätzliche, belegte Plätze lassen das connect sofort scheitern.
+    sec("wireless interfaces", sh("iw dev 2>/dev/null | grep -E '^phy|Interface|type'"))
     sec("interfaces", sh("ip -o link 2>/dev/null | awk '{print $2, $3, $9}' | grep -E '^(wlan|p2p)'")
         + "\n" + sh("ip -4 -o addr 2>/dev/null | awk '{print $2, $4}' | grep -E '^(wlan|p2p)'"))
     # Ob der Sink unseren RTSP-Port 7236 überhaupt erreichen darf.
