@@ -248,6 +248,41 @@ Page {
                 onSliderValueChanged: cast.setAudioOffset(Math.round(sliderValue))
             }
 
+            // Audio route: tap steps through auto, all and a direct copy of
+            // every output the daemon found. Applies live; every switch and
+            // what each stream did lands in the audio log of the report.
+            ValueButton {
+                function outputName(route) {
+                    var s = route.replace(/\.monitor$/, "")
+                    if (s === "sink.deep_buffer") return qsTr("phone media output")
+                    if (s === "sink.primary_output") return qsTr("phone system output")
+                    if (s === "sink.fast") return qsTr("phone low-latency output")
+                    if (s.indexOf("bluez_sink.") === 0) return qsTr("Bluetooth")
+                    return s
+                }
+                readonly property string route: cast.audioRoute
+                readonly property bool failed: page.running
+                                               && cast.audioRouteActive === "failed"
+                label: qsTr("Audio route")
+                value: route === "auto" ? qsTr("Automatic")
+                     : route === "all" ? qsTr("Everything to the TV")
+                     : qsTr("Copy of %1").arg(outputName(route))
+                description: (route === "auto"
+                        ? qsTr("Media from the phone plays on the TV, the phone "
+                               + "stays silent. If the TV stays silent, tap to "
+                               + "try the next route.")
+                        : route === "all"
+                        ? qsTr("Every sound goes to the TV, including Bluetooth, "
+                               + "ringtones and alarms.")
+                        : qsTr("The TV gets a copy of %1 (%2), which keeps "
+                               + "playing there too.")
+                              .arg(outputName(route))
+                              .arg(route.replace(/\.monitor$/, "")))
+                    + (failed ? " " + qsTr("This route does not work, the TV "
+                                           + "gets no audio.") : "")
+                onClicked: cast.cycleAudioRoute()
+            }
+
             // --- receivers -------------------------------------------------
             SectionHeader { text: qsTr("Receivers") }
 

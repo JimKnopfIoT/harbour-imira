@@ -50,6 +50,19 @@ def read(path, limit=None):
     return "\n".join(lines) if lines else "(empty)"
 
 
+def read_head_tail(path, head, tail):
+    # Anfang (Ausgänge, erste Ströme) und Ende (letzte Umschaltungen) —
+    # die Pegelzeilen dazwischen sind entbehrlich.
+    try:
+        with open(path, errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return "(missing)"
+    if len(lines) > head + tail:
+        lines = lines[:head] + ["(... %d lines omitted)" % (len(lines) - head - tail)] + lines[-tail:]
+    return "\n".join(lines) if lines else "(empty)"
+
+
 def first_line(path, default="-"):
     try:
         with open(path, errors="replace") as f:
@@ -117,6 +130,9 @@ def _ip4(m):
 # aber ein Doppelpunkt als Satzzeichen ("connect aa:…:ff: OK") ist erlaubt.
 MAC_RE = re.compile(r"(?<![0-9a-fA-F])(?<![0-9a-fA-F][:-])(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}(?![:-]?[0-9a-fA-F])")
 MAC_ANY_RE = re.compile(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}")
+# PulseAudio schreibt Bluetooth-MACs mit Unterstrichen in Ausgangsnamen
+# (bluez_sink.AA_BB_CC_DD_EE_FF.a2dp_sink) — die stehen im Ton-Log.
+MAC_US_RE = re.compile(r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}_){5}[0-9a-fA-F]{2}(?![0-9a-fA-F])")
 NAME_RES = [
     re.compile(r"(device_name=)(.*?)(\s+(?=[a-z_]+=)|$)"),
     re.compile(r"(\bname=')(.*?)(')"),
@@ -141,6 +157,7 @@ def forget_foreign(text):
 
 
 def anon(text, ips=True):
+    text = MAC_US_RE.sub(lambda m: _mac(re.match(r".*", m.group(0).replace("_", ":"))).replace(":", "_"), text)
     text = MAC_RE.sub(_mac, text)
     text = UUID_RE.sub("<uuid>", text)
     text = SERIAL_RE.sub(lambda m: m.group(1) + "<serial>", text)
@@ -338,6 +355,8 @@ def main():
         "cast interface: %s (driver %s), wlan0 driver %s" % (iface, driver(iface), driver("wlan0")),
         "udhcpc: %s" % ("yes" if sh("command -v udhcpc").strip() else "no"),
         "phone Wi-Fi: %s" % phone_wifi(),
+        "audio route: %s (running: %s)" % (first_line("/tmp/imira-audio-route", "auto"),
+                                           first_line("/tmp/imira-audio-active", "-")),
         "settings: mode %s, resolution %s, receiver %s, detailed log %s, survey %s" % (
             first_line("/tmp/imira-mode", "mirror"), first_line("/tmp/imira-res", "1080"),
             first_line("/tmp/imira-peer", "auto"),
@@ -358,6 +377,8 @@ def main():
     sec("connect log", read("/tmp/imira-connect.log", 500))
     sec("RTSP handshake, current attempt", read_proto("/tmp/imira-proto.log", 400))
     sec("RTSP handshake, earlier attempts", read_proto("/tmp/imira-proto.prev.log", 400))
+    sec("audio log (outputs, streams, route switches, level every 5 s)",
+        read_head_tail("/tmp/imira-audio.log", 60, 240))
     if first_line("/tmp/imira-mode", "") == "convergence":
         sec("convergence compositor", read("/tmp/imira-comp.log", 80))
     for i, p in enumerate(("/tmp/imira-wpa.log", "/tmp/imira-wpa.log.1", "/tmp/imira-wpa.log.2")):

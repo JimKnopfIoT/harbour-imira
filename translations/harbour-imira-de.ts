@@ -28,6 +28,35 @@
 <context>
     <name>CoverPage</name>
     <message>
+        <source>Automatic</source>
+        <translation>Automatisch</translation>
+    </message>
+    <message>
+        <source>Everything to the TV</source>
+        <translation>Alles zum TV</translation>
+    </message>
+    <message>
+        <source>phone media output</source>
+        <translation>Medienausgang des Phones</translation>
+    </message>
+    <message>
+        <source>phone system output</source>
+        <translation>Systemausgang des Phones</translation>
+    </message>
+    <message>
+        <source>phone low-latency output</source>
+        <translation>schneller Ausgang des Phones</translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
+        <translation>Bluetooth</translation>
+    </message>
+    <message>
+        <source>Audio: %1</source>
+        <extracomment>Cover, current audio route; %1 is its name</extracomment>
+        <translation>Ton: %1</translation>
+    </message>
+    <message>
         <source>WLAN off</source>
         <translation>WLAN aus</translation>
     </message>
@@ -174,6 +203,54 @@
         <translation>Audio-Versatz</translation>
     </message>
     <message>
+        <source>phone media output</source>
+        <translation>Medienausgang des Phones</translation>
+    </message>
+    <message>
+        <source>phone system output</source>
+        <translation>Systemausgang des Phones</translation>
+    </message>
+    <message>
+        <source>phone low-latency output</source>
+        <translation>schneller Ausgang des Phones</translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
+        <translation>Bluetooth</translation>
+    </message>
+    <message>
+        <source>Audio route</source>
+        <translation>Tonweg</translation>
+    </message>
+    <message>
+        <source>Automatic</source>
+        <translation>Automatisch</translation>
+    </message>
+    <message>
+        <source>Everything to the TV</source>
+        <translation>Alles zum TV</translation>
+    </message>
+    <message>
+        <source>Copy of %1</source>
+        <translation>Kopie von %1</translation>
+    </message>
+    <message>
+        <source>Media from the phone plays on the TV, the phone stays silent. If the TV stays silent, tap to try the next route.</source>
+        <translation>Medien vom Phone laufen auf dem TV, das Phone bleibt still. Bleibt der TV stumm, tippe für den nächsten Tonweg.</translation>
+    </message>
+    <message>
+        <source>Every sound goes to the TV, including Bluetooth, ringtones and alarms.</source>
+        <translation>Jeder Ton geht zum TV, auch Bluetooth, Klingeltöne und Wecker.</translation>
+    </message>
+    <message>
+        <source>The TV gets a copy of %1 (%2), which keeps playing there too.</source>
+        <translation>Der TV bekommt eine Kopie von %1 (%2), dort läuft der Ton weiter mit.</translation>
+    </message>
+    <message>
+        <source>This route does not work, the TV gets no audio.</source>
+        <translation>Dieser Tonweg funktioniert nicht, der TV bekommt keinen Ton.</translation>
+    </message>
+    <message>
         <source>%1 ms</source>
         <extracomment>Slider value, %1 is a number of milliseconds</extracomment>
         <translation>%1 ms</translation>
@@ -181,10 +258,6 @@
     <message>
         <source>Orientation</source>
         <translation>Ausrichtung</translation>
-    </message>
-    <message>
-        <source>Automatic</source>
-        <translation>Automatisch</translation>
     </message>
     <message>
         <source>Portrait</source>

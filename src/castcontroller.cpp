@@ -31,6 +31,17 @@ const auto kDebugFlag   = QStringLiteral("/tmp/imira-debug");
 const auto kReportReq   = QStringLiteral("/tmp/imira-report-request");
 const auto kReportDone  = QStringLiteral("/tmp/imira-report-done");
 const auto kRadioPath   = QStringLiteral("/tmp/imira-radio");
+const auto kAudioRoutePath   = QStringLiteral("/tmp/imira-audio-route");
+const auto kAudioActivePath  = QStringLiteral("/tmp/imira-audio-active");
+const auto kAudioRoutesPath  = QStringLiteral("/tmp/imira-audio-routes");
+
+QString firstLine(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QString();
+    return QString::fromUtf8(f.readLine()).trimmed();
+}
 
 // Touch an empty flag file. Nothing to write — the file's existence is the
 // message; the service removes it once acted upon.
@@ -162,6 +173,27 @@ void CastController::setFullHd(bool on)
         m_fullHd = on;
         emit statusChanged();
     }
+}
+
+void CastController::cycleAudioRoute()
+{
+    QStringList routes = m_audioRoutes;
+    if (routes.isEmpty())
+        routes << QStringLiteral("auto") << QStringLiteral("all");
+    const int i = routes.indexOf(m_audioRoute);
+    const QString next = routes.at((i + 1) % routes.size());
+    // "auto" is the default: no file. The daemon polls every 250 ms.
+    if (next == QLatin1String("auto")) {
+        QFile::remove(kAudioRoutePath);
+    } else {
+        QFile f(kAudioRoutePath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            f.write(next.toUtf8());
+            f.write("\n");
+        }
+    }
+    m_audioRoute = next;
+    emit statusChanged();
 }
 
 void CastController::setAudioOffset(int ms)
@@ -489,6 +521,23 @@ void CastController::poll()
         const int v = QString::fromUtf8(af.readLine()).trimmed().toInt(&ok);
         if (ok && v >= -2000 && v <= 2000)
             audioOffsetMs = v;
+    }
+
+    QString audioRoute = firstLine(kAudioRoutePath);
+    if (audioRoute.isEmpty())
+        audioRoute = QStringLiteral("auto");
+    const QString audioRouteActive = firstLine(kAudioActivePath);
+    QStringList audioRoutes;
+    QFile arf(kAudioRoutesPath);
+    if (arf.open(QIODevice::ReadOnly | QIODevice::Text))
+        audioRoutes = QString::fromUtf8(arf.readAll())
+                          .split(QLatin1Char('\n'), QString::SkipEmptyParts);
+    if (audioRoute != m_audioRoute || audioRouteActive != m_audioRouteActive
+            || audioRoutes != m_audioRoutes) {
+        m_audioRoute = audioRoute;
+        m_audioRouteActive = audioRouteActive;
+        m_audioRoutes = audioRoutes;
+        emit statusChanged();
     }
 
     QFile mf(kModePath);

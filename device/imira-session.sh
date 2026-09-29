@@ -464,13 +464,25 @@ while true; do
     done
     # Falls der Daemon hart starb, bevor er seine Stille-Senke entladen
     # konnte: Modul anhand des Sink-Namens finden und entladen, sonst
-    # bleiben die Medien-Streams stumm geparkt.
+    # bleiben die Medien-Streams stumm geparkt. Die Streams vorher selbst
+    # zurückschieben — beim bloßen Entladen landen sie auf der Standard-
+    # Senke, und die ist auf dem J2 sink.null (Telefon bliebe stumm).
     MID=$(su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl list short modules" 2>/dev/null \
           | grep "sink_name=imira_cast" | cut -f1)
-    [ -n "$MID" ] && su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl unload-module $MID" 2>/dev/null
+    if [ -n "$MID" ]; then
+        su defaultuser -s /bin/sh -c '
+            export XDG_RUNTIME_DIR=/run/user/100000
+            S=$(pactl list short sinks | awk "\$2 == \"imira_cast\" { print \$1 }")
+            for I in $(pactl list short sink-inputs | awk -v s="$S" "\$2 == s { print \$1 }"); do
+                pactl move-sink-input "$I" sink.deep_buffer
+            done' 2>/dev/null
+        su defaultuser -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/100000 pactl unload-module $MID" 2>/dev/null
+        clog "silence sink left behind by castd, streams moved home"
+    fi
     "$LIBEXEC/wpa_cli-p2p" -p "$CTRL" -i "$IFACE" p2p_group_remove '*' >/dev/null 2>&1
     stop_supplicant
     clog "=== cast stopped"
-    rm -f /tmp/imira-start /tmp/imira-target /tmp/imira-radio
+    # castd endet per _exit und räumt seine Ton-Anzeige nicht selbst weg.
+    rm -f /tmp/imira-start /tmp/imira-target /tmp/imira-radio /tmp/imira-audio-active
     status idle
 done

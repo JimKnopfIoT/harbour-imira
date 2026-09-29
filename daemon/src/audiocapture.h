@@ -20,10 +20,12 @@ public:
     using ChunkCallback = std::function<void(const uint8_t *pcm, size_t size,
                                              int64_t ptsUs)>;
 
-    // source: PulseAudio source name; "" = the default, which builds the
-    // "imira_cast" silence sink, routes media streams into it (phone goes
-    // quiet, ringtones/calls stay local) and captures its monitor. An
-    // explicit name captures that monitor without any routing. Only
+    // source: the audio route. "" or "auto" = the default, which builds the
+    // "imira_cast" silence sink, routes media streams from the phone's own
+    // outputs into it (phone goes quiet, ringtones/calls stay local) and
+    // captures its monitor; "all" routes every playback stream, whatever
+    // output or group. A monitor name captures that output directly
+    // without any routing. Only
     // *.monitor sources are accepted — a stream that ends up anywhere else
     // (Sailfish's routing policy tries to move record streams onto the
     // microphone) is torn down and start() returns false: no audio is ever

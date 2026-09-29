@@ -34,10 +34,19 @@ namespace {
 std::atomic<bool> g_running{true};
 std::atomic<bool> g_needIdr{false};
 
-// Exit immediately: waiting for the wayland dispatch thread can hang forever,
-// and a half-dead instance keeps the compositor's recorder slot occupied.
+// First signal: leave the main loop, which stops the audio first — that
+// sends the phone's music home at once instead of leaving it parked until
+// the session's cleanup runs (measured ~10 s on the J2). The rest of the
+// teardown may hang (the wayland dispatch thread), and a half-dead instance
+// keeps the compositor's recorder slot occupied — so alarm() ends the
+// process 2 s later whatever happens; a second signal ends it at once.
 // The kernel/mediaserver reclaim sockets and codec on process death.
-void onSignal(int) { _exit(0); }
+void onSignal(int)
+{
+    if (!g_running.exchange(false))
+        _exit(0);
+    alarm(2);
+}
 
 void onIdrRequest(int) { g_needIdr = true; }
 
@@ -250,20 +259,41 @@ int main(int argc, char **argv)
     std::atomic<long long> audioOffsetUs{0};
 
     AudioCapture audio;
-    if (audioOn) {
-        audio.start(audioSrcEnv ? audioSrcEnv : "",
-                    [&](const uint8_t *pcm, size_t size, int64_t ptsUs) {
-            std::lock_guard<std::mutex> l(sendLock);
-            std::vector<uint8_t> ts;
-            if (mux.packetizeAudio(pcm, size, ptsUs + audioOffsetUs.load(), ts)) {
-                if (dumpTs) {
-                    fwrite(ts.data(), 1, ts.size(), dumpTs);
-                    fflush(dumpTs);
-                }
-                rtp.send(ts.data(), ts.size(), nowUs());
+    const AudioCapture::ChunkCallback audioCb =
+            [&](const uint8_t *pcm, size_t size, int64_t ptsUs) {
+        std::lock_guard<std::mutex> l(sendLock);
+        std::vector<uint8_t> ts;
+        if (mux.packetizeAudio(pcm, size, ptsUs + audioOffsetUs.load(), ts)) {
+            if (dumpTs) {
+                fwrite(ts.data(), 1, ts.size(), dumpTs);
+                fflush(dumpTs);
             }
-        });
-    }
+            rtp.send(ts.data(), ts.size(), nowUs());
+        }
+    };
+    // Audio route, switched live by the app's "Audio route" button (see
+    // audiocapture.cpp). An explicit IMIRA_AUDIO_SOURCE pins it.
+    auto readRoute = [] {
+        char b[256] = "";
+        if (FILE *f = fopen("/tmp/imira-audio-route", "r")) {
+            if (fscanf(f, "%255s", b) != 1)
+                b[0] = 0;
+            fclose(f);
+        }
+        return std::string(b[0] ? b : "auto");
+    };
+    const bool routeLive = audioOn && !audioSrcEnv;
+    std::string audioRoute = audioSrcEnv ? audioSrcEnv : readRoute();
+    auto startAudio = [&] {
+        const bool ok = audio.start(audioRoute, audioCb);
+        // The route actually in use, for the app ("failed" = no audio).
+        if (FILE *f = fopen("/tmp/imira-audio-active", "w")) {
+            fprintf(f, "%s\n", ok ? audioRoute.c_str() : "failed");
+            fclose(f);
+        }
+    };
+    if (audioOn)
+        startAudio();
 
     FrameConverter conv;
     conv.configure(opt.width, opt.height,
@@ -458,6 +488,16 @@ int main(int argc, char **argv)
                 audioOffsetUs = (long long)ms * 1000;
             fclose(f);
         }
+        if (routeLive) {
+            const std::string r = readRoute();
+            if (r != audioRoute) {
+                // The capture restarts on the new route; its clock anchors
+                // on arrival times again, so the timeline stays continuous.
+                audio.stop();
+                audioRoute = r;
+                startAudio();
+            }
+        }
         if (wantW != opt.width && pendingW.load() == 0) {
             pendingH = wantH;
             pendingBr = wantBr;
@@ -482,14 +522,16 @@ int main(int argc, char **argv)
         }
     }
 
+    // Audio first: it is independent of the video chain, and its teardown
+    // brings the routed streams home (see onSignal). Should castd die
+    // before this, imira-session.sh does it.
+    audio.stop();
+    remove("/tmp/imira-audio-active");
     clockThread.join();
     if (shmInput)
         shmSrc.stop();
     else
         rec.stop();
     enc.stop();
-    // Tears down the silence sink so parked media streams return to the
-    // phone speaker the moment the cast ends.
-    audio.stop();
     return 0;
 }

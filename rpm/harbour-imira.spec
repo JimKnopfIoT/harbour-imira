@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.7
+Version:    0.10.8
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -157,6 +157,23 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Tue Sep 29 2026 harbour-imira contributors 0.10.8-1
+- New "Audio route" button (main page, and on the cover while streaming):
+  steps through Automatic, Everything to the TV (Bluetooth, ringtones and
+  streams of unknown kinds too) and a direct copy of every audio output the
+  phone has. It applies live, so it can be tried while a video plays.
+- Automatic now takes streams from every output of the phone. The Jolla
+  Phone 2026 has a third one (sink.fast); sound playing there stayed on
+  the phone speaker and the TV got silence.
+- After a cast the phone plays its music again. The Jolla Phone 2026 sends
+  sound whose output disappears to a null output, so a player that kept
+  playing through the end of the cast went mute. Streams are now moved back
+  to where they came from, within a fraction of a second.
+- The diagnostic report has an audio log: the phone's outputs, every stream
+  with app, kind and output and whether it went to the TV (and why not),
+  every route switch, and every 5 s whether the TV gets sound or silence.
+  Bluetooth addresses in output names are anonymized.
+
 * Mon Sep 28 2026 harbour-imira contributors 0.10.7-1
 - Casting no longer fails at once with "Failed to create interface
   p2p-p2p0-0: -22". The Wi-Fi driver of the Jolla Phone 2026 allows only
