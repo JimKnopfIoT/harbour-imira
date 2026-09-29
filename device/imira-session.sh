@@ -202,6 +202,20 @@ net_check() {
     fi
 }
 
+wait_rtsp_listen() {
+    # Bis proto.py auf 7236 (0x1C44) lauscht, höchstens 5 s.
+    local i=0
+    while [ $i -lt 50 ]; do
+        grep -q ":1C44 00000000:0000 0A" /proc/net/tcp 2>/dev/null && {
+            clog "rtsp: listening after $((i * 100)) ms, now setting the address"
+            return 0
+        }
+        sleep 0.1
+        i=$((i + 1))
+    done
+    clog "rtsp: no listener after 5 s, setting the address anyway"
+}
+
 diag_scan() {
     # Aktive Prüfung für den Diagnosebericht: ~15 s nach Peers suchen und
     # alles festhalten, was jeder über sich verrät — auch wenn der Nutzer
@@ -411,12 +425,18 @@ while true; do
         # sich, bekommt keine Antwort und wirft die Gruppe nach 15 s weg.
         [ "$IFACE" != "$GIF" ] && ip -4 addr flush dev "$IFACE" 2>/dev/null
         ip -4 addr flush dev "$GIF" 2>/dev/null
-        ip addr add "$MY/$PFX" dev "$GIF" 2>/dev/null
-        net_check "$GIF" "$GO"
+        # Erst lauschen, dann die Adresse setzen: Manche Sinks (hichip-
+        # Projektor) klopfen genau einmal, gleich nach dem DHCP-ACK. Ohne
+        # Adresse bleibt ihr SYN unbeantwortet und wird wiederholt; mit
+        # Adresse, aber ohne Listener, gibt es ein RST — und sie kommen nie
+        # wieder.
         IMIRA_LOCAL_IP="$MY" IMIRA_SINK_IP="$GO" \
         IMIRA_STREAM_CMD="$LIBEXEC/run-castd.sh {ip} {port}" \
             python3 "$LIBEXEC/imira-wfd-proto.py" >> "$PLOG" 2>&1 &
         PROTO=$!
+        wait_rtsp_listen
+        ip addr add "$MY/$PFX" dev "$GIF" 2>/dev/null
+        net_check "$GIF" "$GO"
         # "streaming" erst, wenn wirklich Bilder rausgehen (castd meldet
         # "N frames" erst nach PLAY). Vorher steht die Gruppe zwar, aber
         # der Sink hat die Sitzung noch nicht aufgebaut — früher hieß das
