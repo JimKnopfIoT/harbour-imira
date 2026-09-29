@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.8
+Version:    0.10.9
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -157,6 +157,18 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Tue Sep 29 2026 harbour-imira contributors 0.10.9-1
+- Imira now listens for the receiver before the phone takes its address in
+  the Wi-Fi Direct group. Some receivers (a hichip projector) try to
+  connect once, right after handing out the address; if nothing listened
+  at that moment they never came back, and most casts ended without a
+  picture.
+- A receiver that names an address outside its own network as its DHCP
+  server no longer confuses the connection check; the first address of
+  the network is used instead.
+- The diagnostic report fits into a forum post: the most useful parts come
+  first, long logs are shortened to stay below the forum's size limit, and
+  hidden values show as [ip] instead of <ip>, which the forum swallowed.
 * Tue Sep 29 2026 harbour-imira contributors 0.10.8-1
 - New "Audio route" button (main page, and on the cover while streaming):
   steps through Automatic, Everything to the TV (Bluetooth, ringtones and

@@ -71,6 +71,26 @@ dhcp_lease() {
     cat "$out"
 }
 
+ip2int() {
+    local IFS=.
+    set -- $1
+    echo $(( ($1 << 24) | ($2 << 16) | ($3 << 8) | $4 ))
+}
+
+same_net() {
+    # $1 und $2 im selben Netz mit Präfix $3?
+    case "$1" in *[!0-9.]*|"") return 1 ;; esac
+    local m=$(( (0xFFFFFFFF << (32 - $3)) & 0xFFFFFFFF ))
+    [ $(( $(ip2int "$1") & m )) -eq $(( $(ip2int "$2") & m )) ]
+}
+
+net_first() {
+    # Erste Adresse im Netz von $1/$2 (üblich für den GO: x.y.z.1).
+    local m=$(( (0xFFFFFFFF << (32 - $2)) & 0xFFFFFFFF ))
+    local n=$(( ($(ip2int "$1") & m) + 1 ))
+    echo "$(( (n >> 24) & 255 )).$(( (n >> 16) & 255 )).$(( (n >> 8) & 255 )).$(( n & 255 ))"
+}
+
 is_sink() {
     # wfd_subelems: <id:2><laenge:4><device-information:4>… — die untersten
     # zwei Bits der Device Information nennen den Gerätetyp: 0 = Quelle,
@@ -227,11 +247,21 @@ for v in $(seq 1 "$MAX"); do
                 L=$(dhcp_lease "$GIF")
                 if [ -n "$L" ]; then
                     set -- $L
-                    MY=$1; GO=$2; PFX=$4
+                    MY=$1; PFX=$4
                     [ "$MY" = "-" ] && MY=""
-                    [ "$GO" = "-" ] && GO=$3        # kein Router: DHCP-Server = GO
-                    [ "$GO" = "-" ] && GO=""
                     log "dhcp: lease $L"
+                    # Sink = Router, sonst DHCP-Server — aber nur, wenn er im
+                    # Lease-Netz liegt. Der hichip-Projektor meldet als
+                    # Server eine öffentliche Adresse; der Sink sitzt dann
+                    # (wie bei Android-GOs üblich) auf der .1 des Netzes.
+                    GO=""
+                    for c in "$2" "$3"; do
+                        [ "$c" != "-" ] && [ -n "$MY" ] && same_net "$c" "$MY" "$PFX" && { GO=$c; break; }
+                    done
+                    if [ -z "$GO" ] && [ -n "$MY" ]; then
+                        GO=$(net_first "$MY" "$PFX")
+                        log "dhcp: router/server outside $MY/$PFX, assuming sink at $GO"
+                    fi
                 else
                     SRC=guess
                 fi

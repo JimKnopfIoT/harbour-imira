@@ -99,7 +99,7 @@ def _name(m):
         return m.group(0)
     if len(m.group(2).strip()) >= 3:
         _foreign.add(m.group(2).strip())
-    return m.group(1) + "<other device>" + m.group(3)
+    return m.group(1) + "[other device]" + m.group(3)
 
 
 def _ssid_value(v):
@@ -107,9 +107,9 @@ def _ssid_value(v):
         # DIRECT-xy-<Name>: Gruppenkennung bleibt, fremde Namen nicht.
         rest = v[9:]
         if rest and not (TARGET and rest.strip("- ") in TARGET):
-            return v[:9] + "-<name>"
+            return v[:9] + "-[name]"
         return v
-    return "<ssid>"
+    return "[ssid]"
 
 
 def _ssid_q(m):
@@ -123,7 +123,7 @@ def _ip4(m):
     private = (a[0] in (0, 10, 127, 255) or (a[0] == 172 and 16 <= a[1] <= 31)
                or (a[0] == 192 and a[1] == 168) or (a[0] == 169 and a[1] == 254)
                or a[0] >= 224)
-    return m.group(0) if private else "<ip>"
+    return m.group(0) if private else "[ip]"
 
 
 # Grenzen: kein Hex davor/danach, auch nicht über einen Doppelpunkt hinweg —
@@ -152,25 +152,25 @@ def forget_foreign(text):
     # Zweites Netz: jeder einmal erkannte fremde Name wird überall ersetzt,
     # in welchem Format er auch sonst noch auftaucht (SSID, Debugzeile, …).
     for n in sorted(_foreign, key=len, reverse=True):
-        text = text.replace(n, "<other device>")
+        text = text.replace(n, "[other device]")
     return text
 
 
 def anon(text, ips=True):
     text = MAC_US_RE.sub(lambda m: _mac(re.match(r".*", m.group(0).replace("_", ":"))).replace(":", "_"), text)
     text = MAC_RE.sub(_mac, text)
-    text = UUID_RE.sub("<uuid>", text)
-    text = SERIAL_RE.sub(lambda m: m.group(1) + "<serial>", text)
+    text = UUID_RE.sub("[uuid]", text)
+    text = SERIAL_RE.sub(lambda m: m.group(1) + "[serial]", text)
     for r in NAME_RES:
         text = r.sub(_name, text)
     text = SSID_Q_RE.sub(_ssid_q, text)
     text = SSID_IW_RE.sub(lambda m: m.group(1) + _ssid_value(m.group(2).strip()), text)
-    text = HOME_RE.sub("/home/<user>", text)
+    text = HOME_RE.sub("/home/[user]", text)
     if ips:
         text = IP4_RE.sub(_ip4, text)
         # Nur echte IPv6 (mit "::" oder acht Gruppen); Uhrzeiten wie
         # 14:29:05 haben weder noch.
-        text = IP6_RE.sub(lambda m: "<ipv6>" if ("::" in m.group(0) or m.group(0).count(":") == 7) else m.group(0), text)
+        text = IP6_RE.sub(lambda m: "[ipv6]" if ("::" in m.group(0) or m.group(0).count(":") == 7) else m.group(0), text)
     # Sicherheitsnetz: was an MAC-artigem noch übrig ist, ohne Grenzprüfung.
     text = MAC_ANY_RE.sub(_mac, text)
     return text
@@ -330,6 +330,60 @@ def phone_wifi():
     return "connected on %d MHz%s" % (f, " (radar/DFS channel, Wi-Fi Direct cannot share it)" if dfs else "")
 
 
+# Das Sailfish-Forum nimmt höchstens 50 000 Zeichen pro Beitrag — mit
+# Luft für ``` und ein paar Worte des Nutzers.
+REPORT_BUDGET = 45000
+
+
+def cut(body, size, keep):
+    """body auf etwa size Zeichen kürzen, ganze Zeilen, mit Vermerk."""
+    lines = body.splitlines()
+    if len(body) <= size or not lines:
+        return body
+    size = max(size - 60, 0)
+    if keep == "head":
+        head_n, tail_n = size, 0
+    elif keep == "headtail":
+        head_n, tail_n = size // 2, size - size // 2
+    else:
+        head_n, tail_n = 0, size
+    head, used = [], 0
+    for l in lines:
+        if used + len(l) + 1 > head_n:
+            break
+        head.append(l)
+        used += len(l) + 1
+    tail, used = [], 0
+    for l in reversed(lines[len(head):]):
+        if used + len(l) + 1 > tail_n:
+            break
+        tail.insert(0, l)
+        used += len(l) + 1
+    gone = len(lines) - len(head) - len(tail)
+    return "\n".join(head + ["(... %d lines cut to fit a forum post)" % gone] + tail)
+
+
+def fit(parts, budget):
+    """Kürzbare Abschnitte (Gewicht > 0) so beschneiden, dass alles zusammen
+    ins Budget passt. Wasserstand: jeder bekommt höchstens Gewicht × Pegel,
+    der Pegel so hoch wie möglich; kleine Abschnitte bleiben ganz."""
+    fixed = sum(len(t) + len(b) + 1 for t, b, w, _k in parts if w == 0) \
+        + sum(len(t) + 1 for t, b, w, _k in parts if w > 0)
+    free = budget - fixed
+    cand = [p for p in parts if p[2] > 0]
+    if sum(len(p[1]) for p in cand) <= free:
+        return
+    lo, hi = 0.0, float(max(len(p[1]) for p in cand))
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if sum(min(len(p[1]), p[2] * mid) for p in cand) <= free:
+            lo = mid
+        else:
+            hi = mid
+    for p in cand:
+        p[1] = cut(p[1], int(p[2] * lo), p[3])
+
+
 def main():
     now = datetime.datetime.now(datetime.timezone.utc)
     rel = os_release()
@@ -341,8 +395,10 @@ def main():
 
     parts = []
 
-    def sec(title, body, ips=True):
-        parts.append("\n===== %s =====\n%s\n" % (title, anon(body, ips)))
+    def sec(title, body, ips=True, weight=0, keep="tail"):
+        # weight > 0: darf gekürzt werden, damit der Bericht in einen
+        # Forenbeitrag passt (siehe fit()); größeres Gewicht = mehr Platz.
+        parts.append(["\n===== %s =====\n" % title, anon(body, ips), weight, keep])
 
     head = [
         "Imira diagnostic report",
@@ -367,24 +423,25 @@ def main():
         "",
         "Anonymized: MAC addresses cut to the vendor part, names of other",
         "devices, network names, serial numbers, UUIDs and public IP addresses",
-        "removed. Please look it over before posting it.",
+        "removed. Please look it over before posting it. In the forum, paste",
+        "it unchanged between two lines of ``` (keeps the line breaks).",
     ]
     # Kopf ohne IP-Filter: Versionsnummern wie 5.2.0.17 sähen sonst wie
     # IPv4-Adressen aus.
-    parts.append(anon("\n".join(head), ips=False) + "\n")
+    parts.append([anon("\n".join(head), ips=False) + "\n", "", 0, "tail"])
 
-    sec("diagnostic scan (receivers nearby)", read("/tmp/imira-diag-scan.log", 200))
-    sec("connect log", read("/tmp/imira-connect.log", 500))
-    sec("RTSP handshake, current attempt", read_proto("/tmp/imira-proto.log", 400))
-    sec("RTSP handshake, earlier attempts", read_proto("/tmp/imira-proto.prev.log", 400))
+    # Reihenfolge nach Nutzen: Was eine Sitzung erklärt (RTSP, Ton) steht
+    # vorn, die langen Funk-Logs hinten — wird ein Beitrag doch abgeschnitten,
+    # fehlt das Unwichtigste.
+    sec("diagnostic scan (receivers nearby)", read("/tmp/imira-diag-scan.log", 200), weight=1)
+    sec("RTSP handshake, current attempt", read_proto("/tmp/imira-proto.log", 400), weight=2,
+        keep="headtail")
     sec("audio log (outputs, streams, route switches, level every 5 s)",
-        read_head_tail("/tmp/imira-audio.log", 60, 240))
+        read_head_tail("/tmp/imira-audio.log", 60, 240), weight=2, keep="headtail")
+    sec("RTSP handshake, earlier attempts", read_proto("/tmp/imira-proto.prev.log", 400), weight=2)
+    sec("connect log", read("/tmp/imira-connect.log", 500), weight=3)
     if first_line("/tmp/imira-mode", "") == "convergence":
-        sec("convergence compositor", read("/tmp/imira-comp.log", 80))
-    for i, p in enumerate(("/tmp/imira-wpa.log", "/tmp/imira-wpa.log.1", "/tmp/imira-wpa.log.2")):
-        sec("wpa_supplicant log (%s)" % ("latest run" if i == 0 else "%d run(s) earlier" % i),
-            filter_wpa(p, 3000))
-    sec("wireless capabilities", iw_phy_summary())
+        sec("convergence compositor", read("/tmp/imira-comp.log", 80), weight=1)
     # Alle WLAN-Interfaces mit Typ, auch fremde Namen: Der J2-Treiber erlaubt
     # nur zwei zusätzliche, belegte Plätze lassen das connect sofort scheitern.
     sec("wireless interfaces", sh("iw dev 2>/dev/null | grep -E '^phy|Interface|type'"))
@@ -392,9 +449,16 @@ def main():
         + "\n" + sh("ip -4 -o addr 2>/dev/null | awk '{print $2, $4}' | grep -E '^(wlan|p2p)'"))
     # Ob der Sink unseren RTSP-Port 7236 überhaupt erreichen darf.
     sec("firewall (INPUT)", sh("iptables -S INPUT 2>/dev/null | head -20; "
-                               "iptables -S connman-INPUT 2>/dev/null | head -60"))
+                               "iptables -S connman-INPUT 2>/dev/null | head -60"), weight=1)
     if SURVEY:
-        sec("radio environment", survey())
+        sec("radio environment", survey(), weight=1)
+    sec("wireless capabilities", iw_phy_summary(), weight=1, keep="head")
+    for i, p in enumerate(("/tmp/imira-wpa.log", "/tmp/imira-wpa.log.1", "/tmp/imira-wpa.log.2")):
+        sec("wpa_supplicant log (%s)" % ("latest run" if i == 0 else "%d run(s) earlier" % i),
+            filter_wpa(p, 3000), weight=2 if i == 0 else 1)
+
+    fit(parts, REPORT_BUDGET)
+    parts = [t + b + ("\n" if b else "") for t, b, _w, _k in parts]
 
     text = forget_foreign("".join(parts))
 
