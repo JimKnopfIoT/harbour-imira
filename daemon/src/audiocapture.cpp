@@ -18,14 +18,27 @@
  * before the mix we tap. Ringtones, alarms and call audio are deliberately
  * left alone — those must keep sounding on the phone. On stop the null sink
  * is unloaded and PulseAudio hands the streams back to the real sink.
+ *
+ * Audio route (/tmp/imira-audio-route, switched live from the app):
+ *   auto  media streams on the phone's own outputs go to the TV (default)
+ *   all   every playback stream goes to the TV, Bluetooth and ringtones too
+ *   <sink>.monitor  capture that output directly, no routing (the phone
+ *         or the Bluetooth speaker keeps playing along)
+ * Every decision lands in /tmp/imira-audio.log, which the diagnostic report
+ * attaches: which outputs exist, which stream played where and why it was
+ * or was not taken, and every 5 s whether the TV gets sound or silence.
  */
 #include "audiocapture.h"
 
 #include <chrono>
+#include <cmath>
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <ctime>
+#include <map>
 
 #include <pulse/pulseaudio.h>
 
@@ -67,6 +80,47 @@ constexpr size_t kFragBytes = kChunkBytes * 25;   // 250 ms
 const char *kSilenceSink = "imira_cast";
 const char *kSilenceMonitor = "imira_cast.monitor";
 const char *kFallbackMonitor = "sink.deep_buffer.monitor";
+const char *kRoutesPath = "/tmp/imira-audio-routes";
+
+// Audio log: stderr (ends up in the handshake log) plus, stamped, the file
+// the diagnostic report attaches. Level lines go to the file only — every
+// 5 s would push the handshake out of the report's line limit.
+FILE *audioLogFile()
+{
+    static FILE *f = [] {
+        FILE *l = fopen("/tmp/imira-audio.log", "w");
+        if (l)
+            setvbuf(l, nullptr, _IOLBF, 0);
+        return l;
+    }();
+    return f;
+}
+
+__attribute__((format(printf, 2, 3)))
+void alog(bool toStderr, const char *fmt, ...)
+{
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    if (toStderr)
+        fprintf(stderr, "imira-castd: %s\n", msg);
+    if (FILE *f = audioLogFile()) {
+        time_t t = time(nullptr);
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        char line[560];
+        snprintf(line, sizeof(line), "%02d:%02d:%02d %s\n",
+                 tmv.tm_hour, tmv.tm_min, tmv.tm_sec, msg);
+        fputs(line, f);
+    }
+}
+
+const char *orQ(const char *s)
+{
+    return s && *s ? s : "?";
+}
 
 bool isMonitorName(const char *name)
 {
@@ -102,12 +156,28 @@ struct AudioCapture::Impl {
     bool verified = false;
 
     // --- local-silence routing state ---
+    enum Mode { Direct, Auto, All } mode = Auto;
+    std::string route;                          // as asked for, for the log
     bool routing = false;                       // we own imira_cast + moves
     uint32_t silenceSink = PA_INVALID_INDEX;    // sink index of imira_cast
     uint32_t silenceModule = PA_INVALID_INDEX;  // its owner module (unload!)
-    // The droid hardware sinks; only streams sitting on these are taken.
-    // (Streams on e.g. a Bluetooth sink stay where the user put them.)
-    uint32_t hwSinks[2] = { PA_INVALID_INDEX, PA_INVALID_INDEX };
+    // Every sink, kept current by the subscription. "phone" = an output of
+    // the droid card (the J2 has three: primary_output, deep_buffer, fast);
+    // in auto mode only streams on those are taken — a stream on e.g. a
+    // Bluetooth speaker stays where the user put it.
+    struct Sink { std::string name; bool phone = false; };
+    std::map<uint32_t, Sink> sinks;
+    // Last logged decision per stream, so volume changes (CHANGE events)
+    // do not repeat the same line.
+    std::map<uint32_t, std::string> streamSeen;
+    // Where each stream we took came from. Unloading the silence sink alone
+    // does not bring them home: PulseAudio moves them to the default sink,
+    // and on the J2 that is sink.null — the phone would stay mute after the
+    // cast, and a direct capture after a route switch would hear nothing.
+    std::map<uint32_t, uint32_t> origin;
+    // Level report: loudest sample since the last one.
+    int peak = 0;
+    int64_t lastLevelUs = 0;
 
     // Scratch for the sequential lookups in start(); each step waits on the
     // mainloop until its callback signals.
@@ -162,6 +232,9 @@ struct AudioCapture::Impl {
     void onRead(pa_stream *s);
     void traceBlock(pa_stream *s, size_t nbytes, bool hole);
     void maybeSilence(const pa_sink_input_info *info);
+    void noteSink(const pa_sink_info *i, bool logIt);
+    void publishRoutes();
+    std::string sinkName(uint32_t idx) const;
 };
 
 namespace {
@@ -208,10 +281,7 @@ void listSinksCb(pa_context *, const pa_sink_info *i, int eol, void *ud)
         pa_threaded_mainloop_signal(im->ml, 0);
         return;
     }
-    if (strcmp(i->name, "sink.primary_output") == 0)
-        im->hwSinks[0] = i->index;
-    else if (strcmp(i->name, "sink.deep_buffer") == 0)
-        im->hwSinks[1] = i->index;
+    im->noteSink(i, true);
 }
 
 void loadModuleCb(pa_context *, uint32_t idx, void *ud)
@@ -231,6 +301,17 @@ void successStepCb(pa_context *, int, void *ud)
 
 // Event-path callbacks: these must NEVER signal the mainloop — they fire
 // spontaneously and would wake unrelated waits.
+
+void sinkEventCb(pa_context *, const pa_sink_info *i, int eol, void *ud)
+{
+    if (eol || !i)
+        return;
+    AudioCapture::Impl *im = static_cast<AudioCapture::Impl *>(ud);
+    const bool known = im->sinks.count(i->index) != 0;
+    im->noteSink(i, !known);
+    if (!known)
+        im->publishRoutes();
+}
 
 void sinkInputEventCb(pa_context *, const pa_sink_input_info *i, int eol,
                       void *ud)
@@ -256,10 +337,33 @@ void subscribeCb(pa_context *c, pa_subscription_event_type_t t, uint32_t idx,
                  void *ud)
 {
     AudioCapture::Impl *im = static_cast<AudioCapture::Impl *>(ud);
-    if ((t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK)
-            != PA_SUBSCRIPTION_EVENT_SINK_INPUT)
-        return;
+    const auto facility = t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
     const auto type = t & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
+    if (facility == PA_SUBSCRIPTION_EVENT_SINK) {
+        // Outputs come and go (a Bluetooth speaker connects): keep the list
+        // the app cycles through current.
+        if (type == PA_SUBSCRIPTION_EVENT_REMOVE) {
+            auto it = im->sinks.find(idx);
+            if (it != im->sinks.end()) {
+                alog(true, "audio output gone: %s", it->second.name.c_str());
+                im->sinks.erase(it);
+                im->publishRoutes();
+            }
+            return;
+        }
+        pa_operation *o = pa_context_get_sink_info_by_index(c, idx,
+                                                            sinkEventCb, im);
+        if (o)
+            pa_operation_unref(o);
+        return;
+    }
+    if (facility != PA_SUBSCRIPTION_EVENT_SINK_INPUT)
+        return;
+    if (type == PA_SUBSCRIPTION_EVENT_REMOVE) {
+        im->streamSeen.erase(idx);
+        im->origin.erase(idx);
+        return;
+    }
     if (type != PA_SUBSCRIPTION_EVENT_NEW
             && type != PA_SUBSCRIPTION_EVENT_CHANGE)
         return;
@@ -283,29 +387,94 @@ void waitStep(AudioCapture::Impl *im, pa_operation *o)
 
 } // namespace
 
+std::string AudioCapture::Impl::sinkName(uint32_t idx) const
+{
+    auto it = sinks.find(idx);
+    if (it != sinks.end())
+        return it->second.name;
+    return "sink #" + std::to_string(idx);
+}
+
+void AudioCapture::Impl::noteSink(const pa_sink_info *i, bool logIt)
+{
+    Sink &k = sinks[i->index];
+    k.name = i->name ? i->name : "";
+    k.phone = i->driver && strstr(i->driver, "droid");
+    if (logIt && k.name != kSilenceSink)
+        alog(true, "audio output %s (%s)", k.name.c_str(),
+             k.phone ? "phone" : orQ(i->driver));
+}
+
+void AudioCapture::Impl::publishRoutes()
+{
+    // What the app's "Audio route" button cycles through: the two routing
+    // modes, then every real output as a direct capture.
+    const std::string tmp = std::string(kRoutesPath) + ".new";
+    FILE *f = fopen(tmp.c_str(), "w");
+    if (!f)
+        return;
+    fputs("auto\nall\n", f);
+    for (const auto &k : sinks)
+        if (k.second.name != kSilenceSink && !k.second.name.empty())
+            fprintf(f, "%s.monitor\n", k.second.name.c_str());
+    fclose(f);
+    rename(tmp.c_str(), kRoutesPath);
+}
+
 void AudioCapture::Impl::maybeSilence(const pa_sink_input_info *info)
 {
-    if (!routing || silenceSink == PA_INVALID_INDEX)
-        return;
-    if (info->sink == silenceSink)
-        return;
-    // Only grab streams playing on the phone hardware; anything the user
-    // routed elsewhere (Bluetooth!) is none of our business.
-    if (hwSinks[0] != PA_INVALID_INDEX || hwSinks[1] != PA_INVALID_INDEX) {
-        if (info->sink != hwSinks[0] && info->sink != hwSinks[1])
-            return;
-    }
+    const char *app =
+        pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_NAME);
+    const char *bin =
+        pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_PROCESS_BINARY);
     const char *group = pa_proplist_gets(info->proplist, "policy.group");
-    if (!groupGoesToTv(group))
+    const char *role = pa_proplist_gets(info->proplist, PA_PROP_MEDIA_ROLE);
+    // Never media.name: that is the song or video title.
+    auto note = [&](const std::string &decision) {
+        const std::string key = std::to_string(info->sink) + decision;
+        auto it = streamSeen.find(info->index);
+        if (it != streamSeen.end() && it->second == key)
+            return;
+        streamSeen[info->index] = key;
+        alog(true, "stream #%u \"%s\" (%s, group %s, role %s) on %s: %s",
+             info->index, orQ(app), orQ(bin), orQ(group), orQ(role),
+             sinkName(info->sink).c_str(), decision.c_str());
+    };
+
+    if (routing && info->sink == silenceSink) {
+        // Moved by us (already logged) or left over from an earlier run —
+        // those go home to the media output when the cast ends.
+        if (!streamSeen.count(info->index))
+            note("already on the cast");
+        if (!origin.count(info->index))
+            for (const auto &k : sinks)
+                if (k.second.name == "sink.deep_buffer")
+                    origin[info->index] = k.first;
+        streamSeen[info->index] = "cast";
         return;
+    }
+    if (!routing) {
+        note("plays here (direct capture of " + route + ")");
+        return;
+    }
+    auto sk = sinks.find(info->sink);
+    const bool onPhone = sk != sinks.end() && sk->second.phone;
+    if (mode == Auto && !onPhone) {
+        note("stays (not a phone output; route \"all\" takes it)");
+        return;
+    }
+    if (mode == Auto && !groupGoesToTv(group)) {
+        note(std::string("stays (group ") + orQ(group)
+             + " belongs to the phone; route \"all\" takes it)");
+        return;
+    }
     pa_operation *o = pa_context_move_sink_input_by_index(
         ctx, info->index, silenceSink, nullptr, nullptr);
     if (o)
         pa_operation_unref(o);
-    const char *app =
-        pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_NAME);
-    fprintf(stderr, "imira-castd: routing stream #%u (%s) to the cast\n",
-            info->index, app ? app : "?");
+    origin[info->index] = info->sink;
+    note("moved to the cast");
+    streamSeen[info->index] = "cast";
 }
 
 void AudioCapture::Impl::traceBlock(pa_stream *s, size_t nbytes, bool hole)
@@ -454,13 +623,30 @@ void AudioCapture::Impl::onRead(pa_stream *s)
                 reportedSlewedUs = slewedUs;
                 lastReport = now;
             }
-            bool zero = true;
-            for (size_t z = 0; z < kChunkBytes; z++) {
-                if (chunk[z]) {
-                    zero = false;
-                    break;
-                }
+            int chunkPeak = 0;
+            for (size_t z = 0; z + 1 < kChunkBytes; z += 2) {
+                int v = (int16_t)(chunk[z] | (chunk[z + 1] << 8));
+                if (v < 0)
+                    v = -v;
+                if (v > chunkPeak)
+                    chunkPeak = v;
             }
+            if (chunkPeak > peak)
+                peak = chunkPeak;
+            if (now - lastLevelUs > 5000000) {
+                // What the TV hears: digital zero means nothing plays into
+                // the captured output (e.g. the music plays elsewhere).
+                if (lastLevelUs) {
+                    if (peak == 0)
+                        alog(false, "level: silence (digital zero)");
+                    else
+                        alog(false, "level: sound, peak %d dBFS",
+                             (int)(20 * log10(peak / 32768.0)));
+                }
+                peak = 0;
+                lastLevelUs = now;
+            }
+            const bool zero = chunkPeak == 0;
             if (zero) {
                 zeroRun++;
             } else {
@@ -474,8 +660,7 @@ void AudioCapture::Impl::onRead(pa_stream *s)
                 firstChunkUs = now - kChunkUs;
             chunks++;
             if (chunks == 1)
-                fprintf(stderr, "imira-castd: audio flowing (pts=%lld)\n",
-                        (long long)pts);
+                alog(true, "audio flowing (pts=%lld)", (long long)pts);
             cb(chunk, kChunkBytes, pts);
         }
         pa_stream_drop(s);
@@ -488,19 +673,33 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
     if (m_impl)
         return true;
 
-    // No explicit source = the default: build the silence sink, route media
-    // into it, capture its monitor. An explicit IMIRA_AUDIO_SOURCE skips the
-    // routing entirely and captures the named monitor (diagnostics).
-    const bool wantRouting = source.empty();
+    // "" / "auto" / "all": build the silence sink, route streams into it,
+    // capture its monitor. A monitor name skips the routing and captures
+    // that output directly.
+    Impl::Mode mode = Impl::Direct;
+    if (source.empty() || source == "auto")
+        mode = Impl::Auto;
+    else if (source == "all")
+        mode = Impl::All;
+    const bool wantRouting = mode != Impl::Direct;
     std::string src = wantRouting ? kSilenceMonitor : source;
     if (!isMonitorName(src.c_str())) {
         // Only sink monitors are acceptable capture devices, ever.
-        fprintf(stderr, "imira-castd: refusing non-monitor audio source %s\n",
-                src.c_str());
+        alog(true, "refusing non-monitor audio source %s", src.c_str());
         return false;
     }
 
     Impl *im = new Impl;
+    im->mode = mode;
+    im->route = source.empty() ? "auto" : source;
+    if (mode == Impl::Auto)
+        alog(true, "audio route auto: media on the phone's outputs goes to "
+                   "the TV, the phone stays silent");
+    else if (mode == Impl::All)
+        alog(true, "audio route all: every playback stream goes to the TV");
+    else
+        alog(true, "audio route direct: capturing %s, no routing — it keeps "
+                   "playing where it is", src.c_str());
     if (FILE *ff = fopen("/tmp/imira-castd-flags", "r")) {
         char w[64];
         while (fscanf(ff, "%63s", w) == 1)
@@ -520,8 +719,8 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
     pa_context_set_state_callback(im->ctx, contextState, im->ml);
 
     auto fail = [&](const char *what) {
-        fprintf(stderr, "imira-castd: audio capture failed (%s): %s\n", what,
-                pa_strerror(pa_context_errno(im->ctx)));
+        alog(true, "audio capture failed (%s): %s", what,
+             pa_strerror(pa_context_errno(im->ctx)));
         pa_threaded_mainloop_unlock(im->ml);
         stopImpl(im);
         return false;
@@ -563,32 +762,47 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
         if (im->foundSink == PA_INVALID_INDEX) {
             // No silence sink to be had — cast with audible phone rather
             // than with no audio at all.
-            fprintf(stderr, "imira-castd: no silence sink, phone stays "
-                            "audible\n");
+            alog(true, "no silence sink, phone stays audible");
             src = kFallbackMonitor;
         } else {
             im->silenceSink = im->foundSink;
             im->silenceModule = im->foundModule;
             im->routing = true;
-
-            // 2. Which sinks are the phone hardware.
+        }
+    } else {
+        // Direct capture: a silence sink left over from a crashed run would
+        // still hold the streams, and the captured output would be silent.
+        im->stepDone = false;
+        im->foundSink = PA_INVALID_INDEX;
+        waitStep(im, pa_context_get_sink_info_by_name(im->ctx, kSilenceSink,
+                                                      findSinkCb, im));
+        if (im->foundSink != PA_INVALID_INDEX
+                && im->foundModule != PA_INVALID_INDEX) {
             im->stepDone = false;
-            waitStep(im, pa_context_get_sink_info_list(im->ctx, listSinksCb,
-                                                       im));
-
-            // 3. From now on, grab every appearing media stream …
-            pa_context_set_subscribe_callback(im->ctx, subscribeCb, im);
-            im->stepDone = false;
-            waitStep(im, pa_context_subscribe(
-                             im->ctx, PA_SUBSCRIPTION_MASK_SINK_INPUT,
-                             successStepCb, im));
-
-            // 4. … and whatever is already playing right now.
-            im->stepDone = false;
-            waitStep(im, pa_context_get_sink_input_info_list(
-                             im->ctx, sinkInputSweepCb, im));
+            waitStep(im, pa_context_unload_module(
+                             im->ctx, im->foundModule, successStepCb, im));
         }
     }
+
+    // 2. Every output there is (which ones are the phone's own), for the
+    //    routing decisions, the log and the app's route list.
+    im->stepDone = false;
+    waitStep(im, pa_context_get_sink_info_list(im->ctx, listSinksCb, im));
+    im->publishRoutes();
+
+    // 3. From now on, look at every appearing stream and output …
+    pa_context_set_subscribe_callback(im->ctx, subscribeCb, im);
+    im->stepDone = false;
+    waitStep(im, pa_context_subscribe(
+                     im->ctx, (pa_subscription_mask_t)(
+                         PA_SUBSCRIPTION_MASK_SINK_INPUT
+                         | PA_SUBSCRIPTION_MASK_SINK),
+                     successStepCb, im));
+
+    // 4. … and at whatever is already playing right now.
+    im->stepDone = false;
+    waitStep(im, pa_context_get_sink_input_info_list(
+                     im->ctx, sinkInputSweepCb, im));
 
     pa_sample_spec spec;
     spec.format = PA_SAMPLE_S16LE;
@@ -630,16 +844,14 @@ bool AudioCapture::start(const std::string &source, const ChunkCallback &cb)
     const char *dev = pa_stream_get_device_name(im->stream);
     if (!isMonitorName(dev)) {
         // The policy rerouted us anyway — bail out, silence over mic leak.
-        fprintf(stderr,
-                "imira-castd: audio stream landed on %s, not a monitor — "
-                "audio disabled\n", dev ? dev : "?");
+        alog(true, "audio stream landed on %s, not a monitor — audio "
+                   "disabled", dev ? dev : "?");
         pa_threaded_mainloop_unlock(im->ml);
         stopImpl(im);
         return false;
     }
     im->verified = true;
-    fprintf(stderr, "imira-castd: audio capture from %s%s\n", dev,
-            im->routing ? " (local playback silenced)" : "");
+    alog(true, "audio capture from %s", dev);
 
     pa_threaded_mainloop_unlock(im->ml);
     m_impl = im;
@@ -656,10 +868,27 @@ void AudioCapture::stopImpl(Impl *im)
             pa_stream_disconnect(im->stream);
             pa_stream_unref(im->stream);
         }
-        if (im->ctx && im->routing
+        const bool routed = im->routing;
+        // Routing off before anything moves: each move home fires a CHANGE
+        // event, and a live maybeSilence would pull the stream right back.
+        im->routing = false;
+        if (im->ctx)
+            pa_context_set_subscribe_callback(im->ctx, nullptr, nullptr);
+        if (im->ctx && routed) {
+            // Streams home first (see origin), each to where it came from.
+            for (const auto &o : im->origin) {
+                if (!im->sinks.count(o.second))
+                    continue;   // that output is gone (Bluetooth off)
+                im->stepDone = false;
+                waitStep(im, pa_context_move_sink_input_by_index(
+                                 im->ctx, o.first, o.second, successStepCb,
+                                 im));
+            }
+        }
+        if (im->ctx && routed
                 && im->silenceModule != PA_INVALID_INDEX) {
-            // Unloading the null sink hands the parked streams back to the
-            // real sink — the phone sounds normal again.
+            // Unloading the null sink hands anything still parked to the
+            // default sink.
             im->stepDone = false;
             waitStep(im, pa_context_unload_module(
                              im->ctx, im->silenceModule, successStepCb, im));
@@ -677,6 +906,8 @@ void AudioCapture::stopImpl(Impl *im)
 
 void AudioCapture::stop()
 {
+    if (m_impl)
+        alog(true, "audio route %s stopped", m_impl->route.c_str());
     stopImpl(m_impl);
     m_impl = nullptr;
 }

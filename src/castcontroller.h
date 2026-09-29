@@ -63,6 +63,14 @@ class CastController : public QObject
     Q_PROPERTY(bool fullHd READ fullHd NOTIFY statusChanged)
     // A/V lip-sync trim in ms, positive = audio later. Applies live.
     Q_PROPERTY(int audioOffsetMs READ audioOffsetMs NOTIFY statusChanged)
+    // Audio route (see daemon audiocapture.cpp): "auto", "all" or
+    // "<output>.monitor". audioRoute = chosen, audioRouteActive = what the
+    // daemon runs right now ("" = not casting, "failed" = no audio),
+    // audioRoutes = what cycleAudioRoute() steps through (the daemon lists
+    // the outputs it found; before the first cast only auto/all).
+    Q_PROPERTY(QString audioRoute READ audioRoute NOTIFY statusChanged)
+    Q_PROPERTY(QString audioRouteActive READ audioRouteActive NOTIFY statusChanged)
+    Q_PROPERTY(QStringList audioRoutes READ audioRoutes NOTIFY statusChanged)
     // false = mirror the phone screen (default); true = convergence: the TV
     // becomes its own virtual screen (imira-comp). Applies to the NEXT cast.
     Q_PROPERTY(bool convergence READ convergence NOTIFY statusChanged)
@@ -110,6 +118,8 @@ public:
     Q_INVOKABLE void setRotationMode(const QString &mode);
     Q_INVOKABLE void setFullHd(bool on);
     Q_INVOKABLE void setAudioOffset(int ms);
+    // Next audio route; applies live during a cast.
+    Q_INVOKABLE void cycleAudioRoute();
     Q_INVOKABLE void setConvergence(bool on);
     Q_INVOKABLE void setDebugLog(bool on);
     // survey = also describe the radio environment (channels in use).
@@ -131,6 +141,9 @@ public:
     QString rotationMode() const { return m_rotationMode; }
     bool fullHd() const { return m_fullHd; }
     int audioOffsetMs() const { return m_audioOffsetMs; }
+    QString audioRoute() const { return m_audioRoute; }
+    QString audioRouteActive() const { return m_audioRouteActive; }
+    QStringList audioRoutes() const { return m_audioRoutes; }
     bool convergence() const { return m_convergence; }
     QStringList tvWindows() const { return m_tvWindows; }
     int tvLoad() const { return m_tvLoad; }
@@ -165,6 +178,9 @@ private:
     QString m_rotationMode = QStringLiteral("auto");
     bool    m_fullHd = true;
     int     m_audioOffsetMs = 0;
+    QString m_audioRoute = QStringLiteral("auto");
+    QString m_audioRouteActive;
+    QStringList m_audioRoutes;
     bool    m_convergence = false;
     QStringList m_tvWindows;
     int     m_tvLoad = 0;

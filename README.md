@@ -105,6 +105,11 @@ addresses cut to the maker part, names of other devices and networks
 removed), saved in *Documents* and can be copied straight into an issue or a
 forum post. It tells far more than any description of the symptoms.
 
+**Sound comes from the phone instead of the TV?** Tap *Audio route* on the
+main page (or the second cover action while streaming) to step through the
+ways the sound can reach the TV; a diagnostic report made afterwards shows
+which app played on which output.
+
 ## For smooth casting: mind your Wi-Fi
 
 The phone has **one** radio. While casting it talks to the receiver over
