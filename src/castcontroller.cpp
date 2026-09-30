@@ -34,6 +34,8 @@ const auto kRadioPath   = QStringLiteral("/tmp/imira-radio");
 const auto kAudioRoutePath   = QStringLiteral("/tmp/imira-audio-route");
 const auto kAudioActivePath  = QStringLiteral("/tmp/imira-audio-active");
 const auto kAudioRoutesPath  = QStringLiteral("/tmp/imira-audio-routes");
+const auto kAudioCodecPath   = QStringLiteral("/tmp/imira-audio-codec-pref");
+const auto kAudioCodecUsedPath = QStringLiteral("/tmp/imira-audio-codec");
 
 QString firstLine(const QString &path)
 {
@@ -194,6 +196,27 @@ void CastController::cycleAudioRoute()
     }
     m_audioRoute = next;
     emit statusChanged();
+}
+
+void CastController::setAudioCodec(const QString &codec)
+{
+    // "auto" is the default: no file. The RTSP handshake reads it at the
+    // next cast start (imira-wfd-proto.py).
+    if (codec == QLatin1String("aac") || codec == QLatin1String("lpcm")) {
+        QFile f(kAudioCodecPath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            f.write(codec.toUtf8());
+            f.write("\n");
+        }
+    } else {
+        QFile::remove(kAudioCodecPath);
+    }
+    const QString v = codec == QLatin1String("aac") || codec == QLatin1String("lpcm")
+            ? codec : QStringLiteral("auto");
+    if (m_audioCodec != v) {
+        m_audioCodec = v;
+        emit statusChanged();
+    }
 }
 
 void CastController::setAudioOffset(int ms)
@@ -537,6 +560,16 @@ void CastController::poll()
         m_audioRoute = audioRoute;
         m_audioRouteActive = audioRouteActive;
         m_audioRoutes = audioRoutes;
+        emit statusChanged();
+    }
+
+    QString audioCodec = firstLine(kAudioCodecPath);
+    if (audioCodec != QLatin1String("aac") && audioCodec != QLatin1String("lpcm"))
+        audioCodec = QStringLiteral("auto");
+    const QString audioCodecUsed = firstLine(kAudioCodecUsedPath);
+    if (audioCodec != m_audioCodec || audioCodecUsed != m_audioCodecUsed) {
+        m_audioCodec = audioCodec;
+        m_audioCodecUsed = audioCodecUsed;
         emit statusChanged();
     }
 

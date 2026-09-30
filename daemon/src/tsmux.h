@@ -26,8 +26,9 @@ namespace imira {
 // WiFi Display spec (PMT PID 0x100, PCR PID 0x1000, video PID 0x1011,
 // stream type 0x1b, stream id 0xe0, PTS-only PES headers on a 90 kHz base).
 //
-// Optionally adds one WFD LPCM audio track (PID 0x1100, stream type 0x83,
-// PES private_stream_1 id 0xbd, 4-byte LPCM sub header per access unit).
+// Optionally adds one audio track on PID 0x1100: WFD LPCM (stream type
+// 0x83, PES private_stream_1 id 0xbd, 4-byte LPCM sub header per access
+// unit) or AAC (stream type 0x0f, stream id 0xc0, ADTS framed).
 //
 // Access units MUST be in Annex-B format (with 00 00 00 01 / 00 00 01 start
 // codes), exactly as aethercast expects them from the encoder.
@@ -94,6 +95,20 @@ public:
     bool packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
                         std::vector<uint8_t> &out);
 
+    // Adds the single AAC audio track instead of LPCM, for sinks that
+    // offer LPCM but only play AAC (a hichip projector). 48000 Hz /
+    // 2 channels only; returns the track id (always 1) or -1. The PMT then
+    // advertises stream type 0x0f (ADTS), the PES packets use stream id
+    // 0xc0 — both as in Android's TSPacketizer.
+    int addAacTrack(int sampleRate, int channels);
+
+    // Packetizes one raw AAC-LC access unit (encoder output, without ADTS
+    // header) as one PES packet; the ADTS header is prepended here. ptsUs is
+    // the presentation time of the AU's first sample. "out" is cleared and
+    // filled with whole TS packets. Returns false without an AAC track.
+    bool packetizeAac(const uint8_t *au, size_t len, int64_t ptsUs,
+                      std::vector<uint8_t> &out);
+
     // Presentation delay added to every PTS, video and audio alike (lip
     // sync stays). A live source's samples always reach the sink after
     // their capture time — measured with the silencing sink's monitor: half
@@ -128,6 +143,7 @@ private:
     std::vector<std::vector<uint8_t>> descriptors_;
 
     bool have_audio_track_;
+    bool audio_is_aac_;
     unsigned int audio_continuity_counter_;
     // PMT ES descriptor for the audio track (LPCM audio stream descriptor).
     std::vector<uint8_t> audio_descriptor_;

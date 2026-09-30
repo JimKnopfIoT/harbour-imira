@@ -351,6 +351,20 @@ while true; do
          "iface $IFACE, mode $(cat /tmp/imira-mode 2>/dev/null || echo mirror)," \
          "res $(cat /tmp/imira-res 2>/dev/null || echo 1080), wpa log $(wpa_mode)," \
          "peer $(cat /tmp/imira-peer 2>/dev/null || echo auto)"
+    # Kann das Telefon AAC kodieren? Einmal pro Boot (0,3 s); der Handshake
+    # bietet AAC nur an, wenn ja (imira-wfd-proto.py).
+    if [ ! -s /tmp/imira-aac-probe ]; then
+        # timeout fehlt auf manchen Serien-Telefonen (busybox ohne Applet).
+        TO=""
+        command -v timeout >/dev/null 2>&1 && TO="timeout 10"
+        PROBE=$($TO "$LIBEXEC/imira-castd" --probe-aac 2>/dev/null | grep '^aac:')
+        if [ "$PROBE" = "aac: ok" ]; then
+            echo ok > /tmp/imira-aac-probe
+        else
+            echo no > /tmp/imira-aac-probe
+        fi
+        clog "audio: AAC encoder probe: ${PROBE:-aac: no (no answer)}"
+    fi
     if ! ensure_supplicant; then
         clog "wpa_supplicant did not start on $IFACE"
         status error
@@ -387,6 +401,7 @@ while true; do
             cap_log /tmp/imira-proto.prev.log 262144
         fi
         : > "$PLOG"
+        rm -f /tmp/imira-audio-codec
         ATTEMPTS=$((ATTEMPTS + 1))
         clog "session attempt $ATTEMPTS"
         # Auflösung aus der App-Einstellung (wirkt pro Session): 720 oder 1080.

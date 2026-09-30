@@ -413,6 +413,10 @@ def main():
         "phone Wi-Fi: %s" % phone_wifi(),
         "audio route: %s (running: %s)" % (first_line("/tmp/imira-audio-route", "auto"),
                                            first_line("/tmp/imira-audio-active", "-")),
+        "audio codec: setting %s, last cast %s, AAC encoder %s" % (
+            first_line("/tmp/imira-audio-codec-pref", "auto"),
+            first_line("/tmp/imira-audio-codec", "-"),
+            first_line("/tmp/imira-aac-probe", "not probed")),
         "settings: mode %s, resolution %s, receiver %s, detailed log %s, survey %s" % (
             first_line("/tmp/imira-mode", "mirror"), first_line("/tmp/imira-res", "1080"),
             first_line("/tmp/imira-peer", "auto"),
