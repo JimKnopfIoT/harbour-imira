@@ -283,6 +283,34 @@ Page {
                 onClicked: cast.cycleAudioRoute()
             }
 
+            // Audio codec: LPCM is what every Miracast receiver must play,
+            // AAC what many cheap ones actually do (a projector that offers
+            // both played no LPCM). Agreed in the handshake, so it applies
+            // to the next cast.
+            ComboBox {
+                label: qsTr("Sound format")
+                currentIndex: cast.audioCodec === "aac" ? 1
+                            : cast.audioCodec === "lpcm" ? 2 : 0
+                menu: ContextMenu {
+                    MenuItem { text: qsTr("Automatic") }
+                    MenuItem { text: "AAC" }
+                    MenuItem { text: qsTr("LPCM (uncompressed)") }
+                }
+                description: (page.running && cast.audioCodecUsed !== ""
+                        //: %1 is the audio codec name, AAC or LPCM
+                        ? qsTr("In use: %1.").arg(cast.audioCodecUsed.toUpperCase()) + " "
+                        : "")
+                    + qsTr("Takes effect on the next cast start. If the "
+                           + "receiver shows the picture but plays no sound, "
+                           + "try the other format.")
+                onCurrentIndexChanged: {
+                    var c = currentIndex === 1 ? "aac"
+                          : currentIndex === 2 ? "lpcm" : "auto"
+                    if (c !== cast.audioCodec)
+                        cast.setAudioCodec(c)
+                }
+            }
+
             // --- receivers -------------------------------------------------
             SectionHeader { text: qsTr("Receivers") }
 

@@ -110,6 +110,11 @@ main page (or the second cover action while streaming) to step through the
 ways the sound can reach the TV; a diagnostic report made afterwards shows
 which app played on which output.
 
+**Picture but no sound?** Some receivers offer uncompressed LPCM sound but
+play only AAC. Imira picks AAC by itself when the receiver offers it; if a
+receiver still stays silent, switch *Sound format* on the main page to the
+other format and cast again.
+
 ## For smooth casting: mind your Wi-Fi
 
 The phone has **one** radio. While casting it talks to the receiver over

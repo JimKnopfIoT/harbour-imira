@@ -390,6 +390,23 @@
         <extracomment>%1 = receiver&apos;s channel, %2 = phone&apos;s Wi-Fi, both in MHz</extracomment>
         <translation>Der Empfänger hat einen anderen Kanal (%1 MHz) gewählt als dein WLAN (%2 MHz). Das kann Aussetzer verursachen: Trenne das WLAN während der Übertragung, falls Bild oder Ton stocken.</translation>
     </message>
+    <message>
+        <source>Sound format</source>
+        <translation>Tonformat</translation>
+    </message>
+    <message>
+        <source>LPCM (uncompressed)</source>
+        <translation>LPCM (unkomprimiert)</translation>
+    </message>
+    <message>
+        <source>In use: %1.</source>
+        <extracomment>%1 is the audio codec name, AAC or LPCM</extracomment>
+        <translation>Aktiv: %1.</translation>
+    </message>
+    <message>
+        <source>Takes effect on the next cast start. If the receiver shows the picture but plays no sound, try the other format.</source>
+        <translation>Wirkt ab dem nächsten Cast. Zeigt der Empfänger das Bild, spielt aber keinen Ton, probier das andere Format.</translation>
+    </message>
 </context>
 <context>
     <name>TvAppsPage</name>

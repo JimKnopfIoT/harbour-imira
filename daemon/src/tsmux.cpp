@@ -44,6 +44,11 @@ constexpr unsigned int kLpcmStreamType = 0x83;
 constexpr unsigned int kLpcmStreamId = 0xbd;
 // LPCM audio stream descriptor uses the stream type value as its tag.
 constexpr unsigned int kLpcmDescriptorTag = 0x83;
+// AAC audio track, also from Android's TSPacketizer::addTrack(): ADTS
+// stream type 0x0f, first MPEG audio stream id, no ES descriptor.
+constexpr unsigned int kAacStreamType = 0x0f;
+constexpr unsigned int kAacStreamId = 0xc0;
+constexpr size_t kAdtsHeaderSize = 7;
 
 // Access unit layout from Android's Converter::feedRawAudioInputBuffers():
 // "Split incoming PCM audio into buffers of 6 AUs of 80 audio frames each
@@ -147,6 +152,7 @@ TsMux::TsMux() :
     track_continuity_counter_(0),
     track_finalized_(false),
     have_audio_track_(false),
+    audio_is_aac_(false),
     audio_continuity_counter_(0),
     audio_pending_pts_us_(0) {
     initCrcTable();
@@ -191,6 +197,24 @@ int TsMux::addLpcmTrack(int sampleRate, int channels) {
             | 0xf /* reserved */;
 
     have_audio_track_ = true;
+    audio_is_aac_ = false;
+    audio_continuity_counter_ = 0;
+    audio_pending_.clear();
+    audio_pending_pts_us_ = 0;
+    return 1;
+}
+
+int TsMux::addAacTrack(int sampleRate, int channels) {
+    if (have_audio_track_)
+        return -1;
+    // WFD's AAC modes are 48 kHz; imira only sends the stereo one
+    // (wfd_audio_codecs "AAC 00000001").
+    if (sampleRate != 48000 || channels != 2)
+        return -1;
+    // Android's Track::finalize() builds no descriptor for AAC.
+    audio_descriptor_.clear();
+    have_audio_track_ = true;
+    audio_is_aac_ = true;
     audio_continuity_counter_ = 0;
     audio_pending_.clear();
     audio_pending_pts_us_ = 0;
@@ -382,7 +406,7 @@ void TsMux::emitPatAndPmt(uint8_t *packetDataStart) {
     }
 
     if (have_audio_track_) {
-        *ptr++ = kLpcmStreamType;
+        *ptr++ = audio_is_aac_ ? kAacStreamType : kLpcmStreamType;
         *ptr++ = 0xe0 | (kAudioPID >> 8);
         *ptr++ = kAudioPID & 0xff;
 
@@ -630,7 +654,8 @@ bool TsMux::packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
                            std::vector<uint8_t> &out) {
     out.clear();
 
-    if (!have_audio_track_ || !pcm || len == 0 || (len % kLpcmFrameSize) != 0)
+    if (!have_audio_track_ || audio_is_aac_ || !pcm || len == 0
+            || (len % kLpcmFrameSize) != 0)
         return false;
 
     // If nothing is buffered the incoming timestamp becomes the timestamp of
@@ -690,11 +715,39 @@ bool TsMux::packetizeAudio(const uint8_t *pcm, size_t len, int64_t ptsUs,
     return true;
 }
 
+bool TsMux::packetizeAac(const uint8_t *au, size_t len, int64_t ptsUs,
+                         std::vector<uint8_t> &out) {
+    out.clear();
+    if (!have_audio_track_ || !audio_is_aac_ || !au || len == 0
+            || len + kAdtsHeaderSize > 0x1fff)
+        return false;
+
+    // ADTS header in front of the raw access unit, as Android's
+    // TSPacketizer::prependADTSHeader() does: MPEG-4, no CRC, AAC LC,
+    // 48 kHz (index 3), channel configuration 2, one raw data block.
+    const size_t frameLen = len + kAdtsHeaderSize;
+    std::vector<uint8_t> adts(frameLen);
+    adts[0] = 0xff;
+    adts[1] = 0xf1;
+    adts[2] = (1 /* AAC LC - 1 */ << 6) | (3 << 2) | (2 >> 2);
+    adts[3] = ((2 & 3) << 6) | ((frameLen >> 11) & 3);
+    adts[4] = (frameLen >> 3) & 0xff;
+    adts[5] = ((frameLen & 7) << 5) | 0x1f;   // buffer fullness 0x7ff: VBR
+    adts[6] = 0xfc;
+    ::memcpy(adts.data() + kAdtsHeaderSize, au, len);
+
+    uint64_t PTS = (static_cast<uint64_t>(ptsUs + presentation_delay_us_) * 9ll)
+                   / 100ll;
+    appendAudioPes(adts.data(), adts.size(), PTS, out);
+    return true;
+}
+
 void TsMux::appendAudioPes(const uint8_t *au, size_t auLen, uint64_t pts90,
                            std::vector<uint8_t> &out) {
     // Same PES/TS layout as the video path, but on the audio PID with
-    // stream id private_stream_1 (0xbd). PES_packet_length always fits for
-    // LPCM access units (1924 + 8 bytes), so it is never reset to 0.
+    // stream id private_stream_1 (0xbd) for LPCM or 0xc0 for AAC.
+    // PES_packet_length always fits for LPCM access units (1924 + 8 bytes)
+    // and ADTS frames (at most 8191), so it is never reset to 0.
     size_t PES_packet_length = auLen + 8;
 
     constexpr size_t firstPacketPayload = 188 - 4 - 14;
@@ -738,7 +791,7 @@ void TsMux::appendAudioPes(const uint8_t *au, size_t auLen, uint64_t pts90,
     *ptr++ = 0x00;
     *ptr++ = 0x00;
     *ptr++ = 0x01;
-    *ptr++ = kLpcmStreamId;
+    *ptr++ = audio_is_aac_ ? kAacStreamId : kLpcmStreamId;
     *ptr++ = PES_packet_length >> 8;
     *ptr++ = PES_packet_length & 0xff;
     *ptr++ = 0x84;

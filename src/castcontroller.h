@@ -71,6 +71,10 @@ class CastController : public QObject
     Q_PROPERTY(QString audioRoute READ audioRoute NOTIFY statusChanged)
     Q_PROPERTY(QString audioRouteActive READ audioRouteActive NOTIFY statusChanged)
     Q_PROPERTY(QStringList audioRoutes READ audioRoutes NOTIFY statusChanged)
+    // Audio codec for the NEXT cast: "auto", "aac" or "lpcm". audioCodecUsed
+    // is what the last RTSP handshake agreed on ("aac"/"lpcm", "" = none yet).
+    Q_PROPERTY(QString audioCodec READ audioCodec NOTIFY statusChanged)
+    Q_PROPERTY(QString audioCodecUsed READ audioCodecUsed NOTIFY statusChanged)
     // false = mirror the phone screen (default); true = convergence: the TV
     // becomes its own virtual screen (imira-comp). Applies to the NEXT cast.
     Q_PROPERTY(bool convergence READ convergence NOTIFY statusChanged)
@@ -120,6 +124,7 @@ public:
     Q_INVOKABLE void setAudioOffset(int ms);
     // Next audio route; applies live during a cast.
     Q_INVOKABLE void cycleAudioRoute();
+    Q_INVOKABLE void setAudioCodec(const QString &codec);
     Q_INVOKABLE void setConvergence(bool on);
     Q_INVOKABLE void setDebugLog(bool on);
     // survey = also describe the radio environment (channels in use).
@@ -144,6 +149,8 @@ public:
     QString audioRoute() const { return m_audioRoute; }
     QString audioRouteActive() const { return m_audioRouteActive; }
     QStringList audioRoutes() const { return m_audioRoutes; }
+    QString audioCodec() const { return m_audioCodec; }
+    QString audioCodecUsed() const { return m_audioCodecUsed; }
     bool convergence() const { return m_convergence; }
     QStringList tvWindows() const { return m_tvWindows; }
     int tvLoad() const { return m_tvLoad; }
@@ -181,6 +188,8 @@ private:
     QString m_audioRoute = QStringLiteral("auto");
     QString m_audioRouteActive;
     QStringList m_audioRoutes;
+    QString m_audioCodec = QStringLiteral("auto");
+    QString m_audioCodecUsed;
     bool    m_convergence = false;
     QStringList m_tvWindows;
     int     m_tvLoad = 0;

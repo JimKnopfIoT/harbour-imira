@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.9
+Version:    0.10.10
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -157,6 +157,15 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Wed Sep 30 2026 harbour-imira contributors 0.10.10-1
+- Sound in AAC: some receivers (a hichip projector) offer uncompressed
+  LPCM sound but play only AAC, so the picture came and the sound did not.
+  Imira now sends AAC whenever the receiver offers it and the phone can
+  encode it (Android's own encoder, checked once at the first cast).
+- New "Sound format" setting on the main page: Automatic, AAC or LPCM.
+  If a receiver shows the picture but plays no sound, try the other one.
+  Takes effect on the next cast.
+- The diagnostic report names the sound format that was used.
 * Tue Sep 29 2026 harbour-imira contributors 0.10.9-1
 - Imira now listens for the receiver before the phone takes its address in
   the Wi-Fi Direct group. Some receivers (a hichip projector) try to

@@ -18,6 +18,7 @@
 #include <vector>
 #include <unistd.h>
 
+#include "aacencoder.h"
 #include "audiocapture.h"
 #include "shmsource.h"
 #include "convert.h"
@@ -92,10 +93,59 @@ bool parseArgs(int argc, char **argv, Options &o)
     return !o.dest.empty();
 }
 
+// AAC bit rate: 256 kbit/s is transparent for stereo AAC-LC and a sixth of
+// what LPCM puts on the air.
+constexpr int kAacBitrate = 256000;
+
+// "imira-castd --probe-aac": can this phone encode AAC? The session runs it
+// at cast start, the RTSP handshake only offers AAC when it said yes.
+// Exit 0 = an access unit came out of the encoder.
+int probeAac()
+{
+    std::atomic<int> aus{0};
+    AacEncoder enc;
+    if (!enc.init(kAacBitrate, [&](const uint8_t *, size_t, int64_t) { ++aus; })) {
+        printf("aac: no (%s)\n", enc.lastError().c_str());
+        return 1;
+    }
+    std::vector<uint8_t> silence(960 * 4, 0);
+    for (int i = 0; i < 10 && aus.load() == 0; i++) {
+        enc.feed(silence.data(), silence.size(), i * 20000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    for (int i = 0; i < 50 && aus.load() == 0; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    enc.stop();
+    if (aus.load() == 0) {
+        printf("aac: no (the encoder started but delivered nothing)\n");
+        return 1;
+    }
+    printf("aac: ok\n");
+    return 0;
+}
+
+// Audio codec agreed in the RTSP handshake: imira-wfd-proto.py writes
+// "aac" or "lpcm" to /tmp/imira-audio-codec before it starts us.
+// IMIRA_AUDIO_CODEC overrides it for tests.
+std::string readAudioCodec()
+{
+    if (const char *e = getenv("IMIRA_AUDIO_CODEC"))
+        return e;
+    char b[16] = "";
+    if (FILE *f = fopen("/tmp/imira-audio-codec", "r")) {
+        if (fscanf(f, "%15s", b) != 1)
+            b[0] = 0;
+        fclose(f);
+    }
+    return b;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--probe-aac")
+        return probeAac();
     Options opt;
     if (!parseArgs(argc, argv, opt)) {
         fprintf(stderr,
@@ -135,8 +185,31 @@ int main(int argc, char **argv)
         fprintf(stderr, "imira-castd: presentation delay %d ms\n", presentationDelayMs);
     const char *audioSrcEnv = getenv("IMIRA_AUDIO_SOURCE");
     const bool audioOn = !(audioSrcEnv && std::string(audioSrcEnv) == "off");
-    if (audioOn)
-        mux.addLpcmTrack(48000, 2);
+    // AAC: the encoder has to be up before the track is chosen — without
+    // it the sink gets LPCM (and, having agreed on AAC, most likely stays
+    // silent; the log says why). Its output is wired up further down, once
+    // the sender exists; nothing comes out before the capture feeds it.
+    AacEncoder aac;
+    bool useAac = false;
+    AacEncoder::OutputCallback aacOut;
+    if (audioOn && readAudioCodec() == "aac") {
+        useAac = aac.init(kAacBitrate,
+                          [&](const uint8_t *au, size_t n, int64_t pts) {
+                              if (aacOut)
+                                  aacOut(au, n, pts);
+                          });
+        if (!useAac)
+            fprintf(stderr, "imira-castd: AAC agreed with the sink, but %s: "
+                    "sending LPCM\n", aac.lastError().c_str());
+    }
+    if (audioOn) {
+        if (useAac)
+            mux.addAacTrack(48000, 2);
+        else
+            mux.addLpcmTrack(48000, 2);
+        fprintf(stderr, "imira-castd: audio codec %s\n",
+                useAac ? "AAC-LC 48 kHz stereo 256 kbit/s" : "LPCM 48 kHz stereo");
+    }
 
     std::mutex sendLock;
     std::atomic<int64_t> lastPatUs{0};
@@ -258,9 +331,25 @@ int main(int argc, char **argv)
     // fed by the slider in the app.
     std::atomic<long long> audioOffsetUs{0};
 
+    aacOut = [&](const uint8_t *au, size_t n, int64_t ptsUs) {
+        std::lock_guard<std::mutex> l(sendLock);
+        std::vector<uint8_t> ts;
+        if (mux.packetizeAac(au, n, ptsUs, ts)) {
+            if (dumpTs) {
+                fwrite(ts.data(), 1, ts.size(), dumpTs);
+                fflush(dumpTs);
+            }
+            rtp.send(ts.data(), ts.size(), nowUs());
+        }
+    };
     AudioCapture audio;
     const AudioCapture::ChunkCallback audioCb =
             [&](const uint8_t *pcm, size_t size, int64_t ptsUs) {
+        if (useAac) {
+            // The encoder's output goes out through aacOut.
+            aac.feed(pcm, size, ptsUs + audioOffsetUs.load());
+            return;
+        }
         std::lock_guard<std::mutex> l(sendLock);
         std::vector<uint8_t> ts;
         if (mux.packetizeAudio(pcm, size, ptsUs + audioOffsetUs.load(), ts)) {
@@ -526,6 +615,7 @@ int main(int argc, char **argv)
     // brings the routed streams home (see onSignal). Should castd die
     // before this, imira-session.sh does it.
     audio.stop();
+    aac.stop();
     remove("/tmp/imira-audio-active");
     clockThread.join();
     if (shmInput)
@@ -533,5 +623,10 @@ int main(int argc, char **argv)
     else
         rec.stop();
     enc.stop();
-    return 0;
+    // Not a plain return: the global destructors of libhybris/droidmedia
+    // would run while the codec service's binder threads are still alive —
+    // with the AAC encoder that crashed now and then at exit (core dump in
+    // about one of five test runs). Everything that matters is torn down.
+    fflush(nullptr);
+    _exit(0);
 }

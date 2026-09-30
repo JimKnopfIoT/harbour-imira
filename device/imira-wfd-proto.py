@@ -14,10 +14,64 @@ SINK_IP = os.environ.get("IMIRA_SINK_IP", "192.168.157.1")
 RTSP_PORT = int(os.environ.get("IMIRA_RTSP_PORT", "7236"))
 TS_FILE = os.environ.get("IMIRA_TS_FILE", "/opt/imira/imira-test.ts")
 SERVER_RTP = 19000
+# Tonformat: Einstellung der App (fehlt = auto), Ergebnis der AAC-Probe
+# (imira-session.sh, "ok"/"no") und die hier getroffene Wahl für castd.
+CODEC_PREF = "/tmp/imira-audio-codec-pref"
+AAC_PROBE = "/tmp/imira-aac-probe"
+CODEC_CHOSEN = "/tmp/imira-audio-codec"
 
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def first_word(path, default=""):
+    try:
+        with open(path) as f:
+            w = f.read().split()
+            return w[0] if w else default
+    except OSError:
+        return default
+
+
+def choose_audio_codec(m3_body):
+    """AAC oder LPCM, beide 48 kHz Stereo. Laut WFD muss jeder Sink LPCM
+    können, AAC ist optional — aber manche Sinks (hichip-Projektor) nennen
+    LPCM und spielen nur AAC. In auto nehmen wir darum AAC, wenn der Sink
+    es anbietet und das Telefon es kodieren kann."""
+    m = re.search(r"wfd_audio_codecs:\s*(.+)", m3_body)
+    offer = m.group(1).strip() if m else ""
+    lpcm = aac = False
+    for part in offer.split(","):
+        f = part.split()
+        if len(f) >= 2:
+            try:
+                modes = int(f[1], 16)
+            except ValueError:
+                continue
+            if f[0].upper() == "LPCM" and modes & 0x2:   # 48 kHz, 2 ch
+                lpcm = True
+            elif f[0].upper() == "AAC" and modes & 0x1:  # 48 kHz, 2 ch
+                aac = True
+    pref = first_word(CODEC_PREF, "auto")
+    probe = first_word(AAC_PROBE, "unknown")
+    # Ohne Probe-Ergebnis (noch nicht fertig) gilt AAC als möglich; castd
+    # meldet es, wenn der Encoder fehlt.
+    can_aac = aac and probe != "no"
+    if pref == "lpcm":
+        codec = "lpcm" if lpcm or not can_aac else "aac"
+    elif pref == "aac":
+        codec = "aac" if can_aac else "lpcm"
+    else:
+        codec = "aac" if can_aac else "lpcm"
+    log("== audio codec: %s (setting %s; sink offers %s; AAC encoder %s)"
+        % (codec.upper(), pref, offer or "nothing", probe))
+    try:
+        with open(CODEC_CHOSEN, "w") as f:
+            f.write(codec + "\n")
+    except OSError as e:
+        log("!! cannot write %s: %s" % (CODEC_CHOSEN, e))
+    return codec
 
 
 class WFDSession:
@@ -141,11 +195,13 @@ class WFDSession:
             ports = (self.rtp_ports_line or
                      "RTP/AVP/UDP;unicast %d 0 mode=play"
                      % (self.client_rtp_port or 1028))
+            codec = choose_audio_codec(body)
+            audio = "AAC 00000001 00" if codec == "aac" else "LPCM 00000002 00"
             m4 = (
                 "wfd_video_formats: 00 00 02 02 %s 00000000 00000000 00 0000 0000 11 none none\r\n"
-                "wfd_audio_codecs: LPCM 00000002 00\r\n"
+                "wfd_audio_codecs: %s\r\n"
                 "wfd_presentation_URL: rtsp://%s/wfd1.0/streamid=0 none\r\n"
-                "wfd_client_rtp_ports: %s\r\n" % (cea, LOCAL_IP, ports))
+                "wfd_client_rtp_ports: %s\r\n" % (cea, audio, LOCAL_IP, ports))
             self.send_request("SET_PARAMETER", "rtsp://localhost/wfd1.0", {}, m4)
         elif self.state == "m4sent":
             # M4 bestaetigt -> M5: Trigger SETUP
