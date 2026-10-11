@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.10
+Version:    0.10.11
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -118,8 +118,9 @@ fi
 # PulseAudio only reads xpolicy.conf.d on startup; kick the user instance
 # (systemd --user respawns it immediately). Without the rule the daemon's
 # monitor capture would be rerouted to the mic — which it refuses, so audio
-# would stay off until the next reboot.
-pkill -x pulseaudio >/dev/null 2>&1 || :
+# would stay off until the next reboot. Not pkill -x: busybox matches the
+# full argv[0] (/usr/bin/pulseaudio) and never hits; pidof does.
+P=$(pidof pulseaudio 2>/dev/null) && kill $P >/dev/null 2>&1 || :
 
 %preun
 # $1 = 0 on erase, >= 1 on upgrade — only stop the service when going away.
@@ -157,6 +158,13 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Oct 11 2026 harbour-imira contributors 0.10.11-1
+- No sound after a fresh install until the phone was restarted: the
+  installer is meant to restart the sound server so that it learns the
+  rule that keeps Imira's sound capture off the microphone. On phones
+  whose tools come from busybox that restart never happened, so the
+  capture landed on the microphone and Imira switched the sound off.
+  The restart now works there too.
 * Wed Sep 30 2026 harbour-imira contributors 0.10.10-1
 - Sound in AAC: some receivers (a hichip projector) offer uncompressed
   LPCM sound but play only AAC, so the picture came and the sound did not.
