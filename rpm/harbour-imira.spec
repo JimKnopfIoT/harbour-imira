@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.11
+Version:    0.10.12
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -158,6 +158,13 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Sun Oct 18 2026 harbour-imira contributors 0.10.12-1
+- Receivers that want to be the client of the Wi-Fi Direct group (a
+  portable monitor with a Realtek chip) never connected: the phone became
+  the group owner, and Imira only knew the opposite case. It waited for an
+  address from the receiver, nobody handed one out, and the receiver gave
+  up after a few seconds. As group owner Imira now gives itself an address
+  and runs a small DHCP server for the receiver.
 * Sun Oct 11 2026 harbour-imira contributors 0.10.11-1
 - No sound after a fresh install until the phone was restarted: the
   installer is meant to restart the sound server so that it learns the

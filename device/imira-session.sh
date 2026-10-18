@@ -202,6 +202,47 @@ net_check() {
     fi
 }
 
+DHCPD_PID=""
+dhcpd_start() {
+    # Das Telefon ist GO: Der Sink holt sich seine Adresse bei uns. busybox
+    # udhcpd mit genau einer Adresse im Pool ($2), Router = wir ($3). Die
+    # Firewall (INPUT DROP, connman lässt nur DHCP-Antworten an Port 68
+    # herein) braucht für die Dauer der Sitzung eine Lücke auf Port 67.
+    local conf=/tmp/imira-udhcpd.conf
+    rm -f /tmp/imira-udhcpd.leases
+    : > /tmp/imira-udhcpd.leases
+    cat > "$conf" <<EOC
+interface $1
+start $2
+end $2
+max_leases 1
+lease_file /tmp/imira-udhcpd.leases
+pidfile /tmp/imira-udhcpd.pid
+opt subnet 255.255.255.0
+opt router $3
+opt lease 86400
+EOC
+    # Reste einer hart beendeten Sitzung (SIGTERM ohne Aufräumen) zuerst weg.
+    while iptables -D INPUT -i "$1" -p udp --dport 67 -j ACCEPT 2>/dev/null; do :; done
+    iptables -I INPUT -i "$1" -p udp --dport 67 -j ACCEPT 2>/dev/null \
+        || clog "dhcp server: could not open udp/67 in the firewall"
+    : > /tmp/imira-udhcpd.log
+    udhcpd -f -a 300 "$conf" >> /tmp/imira-udhcpd.log 2>&1 &
+    DHCPD_PID=$!
+    clog "dhcp server: udhcpd on $1, offering $2 (router $3)"
+}
+
+dhcpd_stop() {
+    [ -n "$DHCPD_PID" ] || return 0
+    kill "$DHCPD_PID" 2>/dev/null
+    wait "$DHCPD_PID" 2>/dev/null
+    iptables -D INPUT -i "$1" -p udp --dport 67 -j ACCEPT 2>/dev/null
+    # Was udhcpd erlebt hat (DISCOVER/OFFER/ACK) — zeigt, ob der Sink je
+    # nach einer Adresse gefragt hat.
+    sed 's/^/    udhcpd: /' /tmp/imira-udhcpd.log 2>/dev/null | tail -20 >> "$CLOG"
+    DHCPD_PID=""
+}
+
 wait_rtsp_listen() {
     # Bis proto.py auf 7236 (0x1C44) lauscht, höchstens 5 s.
     local i=0
@@ -434,6 +475,7 @@ while true; do
         MY=$2
         GO=$3
         PFX=${4:-24}
+        ROLE=${5:-client}
         # Die Sitzungsadresse gehört ausschließlich auf das Gruppen-Interface.
         # Ein Rest von früher — etwa auf p2p0, als die Gruppe noch dort lief —
         # kapert sonst die Route auf ein totes Interface: der Sink verbindet
@@ -451,7 +493,14 @@ while true; do
         PROTO=$!
         wait_rtsp_listen
         ip addr add "$MY/$PFX" dev "$GIF" 2>/dev/null
-        net_check "$GIF" "$GO"
+        if [ "$ROLE" = go ]; then
+            # Der Sink hat noch keine Adresse — erst der DHCP-Server, ein
+            # Ping wäre hier sinnlos.
+            dhcpd_start "$GIF" "$GO" "$MY"
+            clog "net: $(ip -4 -o addr show dev "$GIF" 2>/dev/null | awk '{print $2, $4}' | tr '\n' ' ')"
+        else
+            net_check "$GIF" "$GO"
+        fi
         # "streaming" erst, wenn wirklich Bilder rausgehen (castd meldet
         # "N frames" erst nach PLAY). Vorher steht die Gruppe zwar, aber
         # der Sink hat die Sitzung noch nicht aufgebaut — früher hieß das
@@ -479,6 +528,7 @@ while true; do
             sleep 2
         done
         kill "$PROTO" 2>/dev/null
+        dhcpd_stop "$GIF"
         # castd meldet den Zähler nur alle 5 s — nach dem Schleifenende noch
         # einmal lesen, sonst stehen kurze Sitzungen mit 0 Bildern im Log.
         F=$(frames_of)
@@ -493,6 +543,7 @@ while true; do
     done
 
     # Aufräumen nach Stop.
+    dhcpd_stop "${GIF:-}"
     for d in /proc/[0-9]*; do
         C=$(cat "$d/comm" 2>/dev/null)
         { [ "$C" = "imira-castd" ] || [ "$C" = "imira-comp" ]; } && kill -9 "${d#/proc/}" 2>/dev/null

@@ -1,12 +1,15 @@
 #!/bin/bash
 # imira-connect.sh — Wi-Fi-Direct-Verbindung zu einem WFD-Sink aufbauen.
-# Der Sink muss Group Owner werden (Rollen-Verhandlung ist ein Münzwurf,
-# daher Retry-Schleife). Erfolgreich, wenn P2P-GROUP-STARTED ... client.
+# Meist wird der Sink Group Owner (wir verhandeln mit go_intent=0). Manche
+# Sinks wollen aber selbst Client sein (Realtek-Monitor: jede Verhandlung
+# endet mit role=GO) — dann ist das Telefon GO, vergibt die Adresse per
+# DHCP selbst (imira-session.sh startet udhcpd) und wartet auf RTSP.
 #
 # Env: IMIRA_IFACE (wlan1|p2p0), IMIRA_CTRL (ctrl-Socket-Dir),
 #      IMIRA_WPA_LOG (Logdatei des Supplicants), IMIRA_PEER (optional MAC),
 #      IMIRA_FREQ (default 2437), IMIRA_ATTEMPTS (default 12)
-# Ausgabe bei Erfolg auf stdout: "<gruppen-iface> <eigene-ip> <go-ip> <prefix>".
+# Ausgabe bei Erfolg auf stdout:
+#   "<gruppen-iface> <eigene-ip> <sink-ip> <prefix> <rolle>" (rolle client|go).
 # Protokoll (englisch, für Fremd-Berichte) auf stderr → /tmp/imira-connect.log.
 set -u
 IFACE="${IMIRA_IFACE:-wlan1}"
@@ -14,6 +17,16 @@ CTRL="${IMIRA_CTRL:-/var/run/wpa_imira}"
 WPALOG="${IMIRA_WPA_LOG:-/tmp/imira-wpa.log}"
 FREQ="${IMIRA_FREQ:-}"   # leer = Treiber/GO wählt den Kanal
 MAX="${IMIRA_ATTEMPTS:-12}"
+# Eigenes Netz, wenn das Telefon GO wird (wie bei Android-GOs üblich).
+GO_NET="${IMIRA_GO_NET:-192.168.49}"
+# Testschalter: /etc/imira/go-intent mit einer Zahl 0–15. 15 zwingt das
+# Telefon in die GO-Rolle — so lässt sich der GO-Zweig auch mit einem Sink
+# prüfen, der sonst selbst GO würde.
+INTENT=0
+if [ -r /etc/imira/go-intent ]; then
+    I=$(tr -dc 0-9 < /etc/imira/go-intent)
+    [ -n "$I" ] && [ "$I" -le 15 ] && INTENT=$I
+fi
 W="/usr/libexec/imira/wpa_cli-p2p -p $CTRL -i $IFACE"
 
 log() { echo "$(date +%H:%M:%S) $*" >&2; }
@@ -189,8 +202,8 @@ for v in $(seq 1 "$MAX"); do
     # Die ersten zwei Versuche mit dem WLAN-Kanal; lehnt der Sink ihn ab
     # (GO-NEG-FAILURE), geht es ohne Vorgabe weiter.
     [ -z "$FREQARG" ] && [ -n "$STAFREQ" ] && [ "$v" -le 2 ] && FREQARG="freq=$STAFREQ"
-    R=$($W p2p_connect "$PEER" pbc go_intent=0 $FREQARG 2>&1)
-    log "connect $PEER pbc go_intent=0 ${FREQARG:-freq=auto}: $R"
+    R=$($W p2p_connect "$PEER" pbc go_intent=$INTENT $FREQARG 2>&1)
+    log "connect $PEER pbc go_intent=$INTENT ${FREQARG:-freq=auto}: $R"
     if [ "$R" != "OK" ]; then
         # Ein nacktes FAIL kommt vom eigenen Supplicant, bevor ein Frame
         # rausgeht (Peer unbekannt/nur als Gruppen-Client gesehen, kein
@@ -209,9 +222,11 @@ for v in $(seq 1 "$MAX"); do
         # Das Gruppen-Interface kann vom Basis-Interface abweichen (der
         # interne Treiber legt z.B. virtuelle p2p-Interfaces an) — deshalb
         # den Namen aus dem Ereignis übernehmen und mit ausgeben.
-        LINE=$(echo "$J" | grep -E "P2P-GROUP-STARTED [^ ]+ client" | tail -1)
+        LINE=$(echo "$J" | grep -E "P2P-GROUP-STARTED [^ ]+ (client|GO)" | tail -1)
         if [ -n "$LINE" ]; then
-            GIF=$(echo "$LINE" | sed -E "s/.*P2P-GROUP-STARTED ([^ ]+) client.*/\1/")
+            GIF=$(echo "$LINE" | sed -E "s/.*P2P-GROUP-STARTED ([^ ]+) (client|GO).*/\1/")
+            ROLE=client
+            echo "$LINE" | grep -qE "P2P-GROUP-STARTED [^ ]+ GO" && ROLE=go
             GIF=${GIF:-$IFACE}
             log "attempt $v: group up after $((w * 2)) s: ${LINE#*P2P-GROUP-STARTED }"
             GF=$(echo "$LINE" | grep -oE " freq=[0-9]+" | cut -d= -f2)
@@ -236,6 +251,16 @@ for v in $(seq 1 "$MAX"); do
             fi
             echo "$RADIO" > /tmp/imira-radio
             chmod 644 /tmp/imira-radio 2>/dev/null
+            if [ "$ROLE" = go ]; then
+                # Wir sind GO: Der Sink kommt als Client und holt sich die
+                # Adresse per DHCP von uns. Der Pool hat genau eine Adresse,
+                # damit die Sink-Adresse vorher feststeht.
+                log "attempt $v: the phone is group owner (the receiver wants to be the client)"
+                log "address: $GO_NET.1/24, sink $GO_NET.2 (source: own dhcp server)"
+                log_events
+                echo "$GIF $GO_NET.1 $GO_NET.2 24 go"
+                exit 0
+            fi
             MY=$(echo "$LINE" | grep -oE " ip_addr=[0-9.]+" | cut -d= -f2)
             GO=$(echo "$LINE" | grep -oE "go_ip_addr=[0-9.]+" | cut -d= -f2)
             PFX=24
@@ -272,7 +297,7 @@ for v in $(seq 1 "$MAX"); do
             fi
             log "address: $MY/$PFX, sink $GO (source: $SRC)"
             log_events
-            echo "$GIF $MY $GO $PFX"
+            echo "$GIF $MY $GO $PFX client"
             exit 0
         fi
         echo "$J" | grep -qE "FORMATION-FAILURE|GO-NEG-FAILURE" && break
