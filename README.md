@@ -175,6 +175,8 @@ screenshots. Apps that insist on their phone layout get two per-window
 escape hatches in the title bar: a rotation override and a zoom mode that
 scales the app instead of asking it to relayout. Convergence on Sailfish.
 
+AI assisted development
+
 ## License
 
 GPL-3.0-or-later. Parts of the Wi-Fi Direct and screen recording approach
