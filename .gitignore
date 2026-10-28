@@ -23,3 +23,4 @@ translations/harbour-imira.ts
 media/
 daemon/comp/imira-comp
 .mb2/
+imira-version.h

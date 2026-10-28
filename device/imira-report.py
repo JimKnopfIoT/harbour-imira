@@ -14,6 +14,7 @@
 #     Seriennummern, öffentliche IPv4- und alle IPv6-Adressen fliegen raus
 #   - aus dem ausführlichen wpa-Log nur P2P/WPS/WFD/Verbindungszeilen, keine
 #     Hexdumps (darin stehen Namen und SSIDs roh)
+import bisect
 import datetime
 import glob
 import os
@@ -190,6 +191,38 @@ WPA_DROP = re.compile(
     r"P2P-DEVICE-FOUND|P2P-DEVICE-LOST|nl80211: Event message available")
 
 
+# Jede Suchrunde (alle ~0,3 s) wiederholt dieselben Attribut- und Funk-
+# Zeilen. Sie füllten den ausführlichen Log so, dass beim Kürzen die
+# Gruppenbildung verloren ging.
+WPA_NOISE = re.compile(
+    r"WPS:  \* |P2P: \* |P2P: Parsing |P2P: Attribute |Config Methods \(WPS\)|"
+    r"Primary Device Type \(WPS\)|Device Capability .* Group Capability|"
+    r"P2P: Device Info|radio work|Radio work|radio_work|emain-on-channel|"
+    r"Off-channel: Send Action callback|Listen timeout|Listen state|"
+    r"P2P: Timeout \(state=SEARCH\)|P2P: Starting search|P2P: Set timeout|"
+    r"P2P: State SEARCH -> SEARCH|stop_listen|DPP: Remain|SCAN_RESULTS|"
+    r"SCAN_STARTED|NL80211_CMD_(NEW_SCAN_RESULTS|TRIGGER_SCAN)|"
+    r"Do not update peer entry|P2P probe - mask|short listen state|REMAIN_ON_CHANNEL|"
+    r"Add operating class|Supported (vendor|cipher)|Register frame type=|"
+    r"BSS: No P2P IE|channels:|Channels - hexdump|DEL_KEY|broadcast key|"
+    r"Control interface recv command from")
+# Was eine Verbindung ausmacht: Um diese Zeilen herum bleibt alles stehen.
+WPA_FOCUS = re.compile(
+    r"P2P_CONNECT|P2P_PROV_DISC|P2P-PROV-DISC|P2P-GO-NEG|GO Negotiation|"
+    r"P2P-GROUP-|P2P-INVITATION|AP-STA-|AP-ENABLED|WPS-[A-Z]|CTRL-EVENT-EAP|"
+    r"CTRL-EVENT-(CONNECTED|DISCONNECTED)|Register frame command|"
+    r"IEEE 802\.11: (auth|assoc)")
+
+
+def wpa_is_cast(path):
+    """Gehörte dieser Supplicant-Lauf zu einem Cast (nicht zum Diagnose-Scan)?"""
+    try:
+        with open(path, errors="replace") as f:
+            return any("P2P_CONNECT" in l or "GO-NEG" in l or "PROV-DISC" in l for l in f)
+    except OSError:
+        return False
+
+
 def filter_wpa(path, limit):
     try:
         with open(path, errors="replace") as f:
@@ -198,12 +231,76 @@ def filter_wpa(path, limit):
         return "(missing)"
     if not lines:
         return "(empty)"
-    keep = [l for l in lines if WPA_KEEP.search(l) and not WPA_DROP.search(l)
-            or re.search(r"P2P-GROUP-STARTED|P2P-GROUP-REMOVED|GO-NEG|FORMATION", l)]
-    note = "(%d of %d lines kept)" % (len(keep), len(lines))
+    total = len(lines)
+    lines = [l for l in lines if not WPA_NOISE.search(l)]
+    # Zeitfenster von je 2 s um jedes Verbindungsereignis: Dort zählt jede
+    # Zeile, draußen nur der grobe Filter. Ein Fenster vom ersten bis zum
+    # letzten Ereignis umfasste die ganze Sitzung, und beim Kürzen blieben
+    # nur Start und Abbau des Supplicants übrig.
+    def ts(l):
+        try:
+            return float(l.split(":", 1)[0])
+        except ValueError:
+            return None
+    marks = sorted(t for t in (ts(l) for l in lines if WPA_FOCUS.search(l)) if t is not None)
+    def near(t):
+        i = bisect.bisect_left(marks, t - 2)
+        return i < len(marks) and marks[i] <= t + 2
+    keep = []
+    for l in lines:
+        t = ts(l)
+        if t is not None and near(t) and not re.search(r"hexdump|RX mgmt|Event message available", l):
+            keep.append(l)
+        elif WPA_KEEP.search(l) and not WPA_DROP.search(l) \
+                or re.search(r"P2P-GROUP-STARTED|P2P-GROUP-REMOVED|GO-NEG|FORMATION", l):
+            keep.append(l)
+    note = "(%d of %d lines kept)" % (len(keep), total)
     if len(keep) > limit:
         keep = ["(... %d earlier kept lines omitted)" % (len(keep) - limit)] + keep[-limit:]
     return note + "\n" + "\n".join(keep)
+
+
+def cut_focus(body, size):
+    """Wie cut(), aber von den Verbindungsereignissen nach außen: Behalten
+    wird jede Zeile, die höchstens r Zeilen von einem Ereignis entfernt
+    ist, r so groß, wie es passt. Lücken bekommen einen Vermerk."""
+    lines = body.splitlines()
+    if len(body) <= size or not lines:
+        return body
+    focus = [i for i, l in enumerate(lines) if WPA_FOCUS.search(l)]
+    if not focus:
+        return cut(body, size, "tail")
+    dist = [len(lines)] * len(lines)
+    for i in focus:
+        dist[i] = 0
+    for i in range(1, len(lines)):
+        dist[i] = min(dist[i], dist[i - 1] + 1)
+    for i in range(len(lines) - 2, -1, -1):
+        dist[i] = min(dist[i], dist[i + 1] + 1)
+    def build(r):
+        out, gap = [], 0
+        for i, l in enumerate(lines):
+            if dist[i] <= r or i == 0:
+                if gap:
+                    out.append("(... %d lines cut)" % gap)
+                    gap = 0
+                out.append(l)
+            else:
+                gap += 1
+        if gap:
+            out.append("(... %d lines cut)" % gap)
+        return "\n".join(out)
+    lo, hi = -1, len(lines)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if len(build(mid)) <= size:
+            lo = mid
+        else:
+            hi = mid
+    if lo < 0:
+        # Nicht einmal die Ereignisse allein passen: die letzten behalten.
+        return cut("\n".join(lines[i] for i in focus), size, "tail")
+    return build(lo)
 
 
 KEEPALIVE_TX = re.compile(r">>> GET_PARAMETER rtsp://localhost/wfd1\.0 RTSP/1\.0 \| CSeq: \d+ \| Session: \S+ \|  \| $")
@@ -381,7 +478,8 @@ def fit(parts, budget):
         else:
             hi = mid
     for p in cand:
-        p[1] = cut(p[1], int(p[2] * lo), p[3])
+        size = int(p[2] * lo)
+        p[1] = cut_focus(p[1], size) if p[3] == "focus" else cut(p[1], size, p[3])
 
 
 def main():
@@ -457,9 +555,14 @@ def main():
     if SURVEY:
         sec("radio environment", survey(), weight=1)
     sec("wireless capabilities", iw_phy_summary(), weight=1, keep="head")
+    # Ein Diagnose-Scan nach dem Cast ist selbst ein Supplicant-Lauf und
+    # schöbe den Cast nach hinten: Cast-Läufe bekommen den Platz, Scans
+    # wenig. Gekürzt wird von den Verbindungsereignissen nach außen.
     for i, p in enumerate(("/tmp/imira-wpa.log", "/tmp/imira-wpa.log.1", "/tmp/imira-wpa.log.2")):
-        sec("wpa_supplicant log (%s)" % ("latest run" if i == 0 else "%d run(s) earlier" % i),
-            filter_wpa(p, 3000), weight=2 if i == 0 else 1)
+        cast = wpa_is_cast(p)
+        sec("wpa_supplicant log (%s, %s)" % ("latest run" if i == 0 else "%d run(s) earlier" % i,
+                                             "cast" if cast else "scan only"),
+            filter_wpa(p, 6000), weight=(4 if cast else 1), keep="focus" if cast else "tail")
 
     fit(parts, REPORT_BUDGET)
     parts = [t + b + ("\n" if b else "") for t, b, _w, _k in parts]
@@ -469,7 +572,7 @@ def main():
     pw = pwd.getpwnam(USER)
     docs = os.path.join(pw.pw_dir, "Documents")
     os.makedirs(docs, exist_ok=True)
-    path = os.path.join(docs, "imira-report-%s.txt" % now.strftime("%Y%m%d-%H%M%S"))
+    path = os.path.join(docs, "imira-report-%s.txt" % now.astimezone().strftime("%Y%m%d-%H%M%S"))
     with open(path, "w") as f:
         f.write(text)
     os.chown(path, pw.pw_uid, pw.pw_gid)

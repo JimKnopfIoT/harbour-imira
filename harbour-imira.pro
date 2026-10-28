@@ -20,10 +20,16 @@ QT += core qml quick dbus
 # standalone/IDE build from showing an empty version on the About page.
 isEmpty(VERSION): VERSION = 0.1.0
 isEmpty(RELEASE): RELEASE = 1
-DEFINES += APP_VERSION=\\\"$$VERSION\\\"
-DEFINES += APP_RELEASE=\\\"$$RELEASE\\\"
+# As a generated header, not as DEFINES: a changed DEFINES line does not
+# make make rebuild harbour-imira.o, so an incremental build kept showing
+# the old number (0.10.11 and 0.10.12 said 0.10.10). make sees the header.
+VERSION_LINES = "$${LITERAL_HASH}define APP_VERSION \"$$VERSION\"" \
+                "$${LITERAL_HASH}define APP_RELEASE \"$$RELEASE\""
+write_file($$OUT_PWD/imira-version.h, VERSION_LINES)
+INCLUDEPATH += $$OUT_PWD
 
 HEADERS += \
+    $$OUT_PWD/imira-version.h \
     src/castcontroller.h \
     src/tvpreview.h
 

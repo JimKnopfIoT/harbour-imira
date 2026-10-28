@@ -11,7 +11,7 @@
 # Neutral packaging metadata — no personal identifiers (anonymity rules).
 Name:       harbour-imira
 Summary:    Miracast screen mirroring for Sailfish OS
-Version:    0.10.12
+Version:    0.10.13
 Release:    1
 # ANONYMITY: neutral build host so built RPMs carry no real hostname/domain.
 %define _buildhost reproducible-builder
@@ -158,6 +158,14 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_sysconfdir}/pulse/xpolicy.conf.d/imira.conf
 
 %changelog
+* Wed Oct 28 2026 harbour-imira contributors 0.10.13-1
+- The About page showed 0.10.10 in versions 0.10.11 and 0.10.12. It now
+  shows the installed version again.
+- Diagnostic report: the detailed Wi-Fi log keeps the moments that
+  matter (group negotiation, group start, the receiver joining or not)
+  instead of the search that follows a failed attempt. A diagnostic scan
+  after a cast no longer pushes the cast's log out of the report.
+- The report's file name now uses the phone's local time, like the logs.
 * Sun Oct 18 2026 harbour-imira contributors 0.10.12-1
 - Receivers that want to be the client of the Wi-Fi Direct group (a
   portable monitor with a Realtek chip) never connected: the phone became

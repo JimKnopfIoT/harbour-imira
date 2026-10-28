@@ -16,6 +16,7 @@
 #include <sailfishapp.h>
 
 #include "castcontroller.h"
+#include "imira-version.h"
 #include "tvpreview.h"
 
 int main(int argc, char *argv[])
