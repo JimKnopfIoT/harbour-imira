@@ -44,9 +44,12 @@ log_events() {
     # Alle P2P/WPS-Ereignisse dieses Versuchs aus dem Supplicant-Log, ohne
     # das Discovery-Rauschen. Erklärt, WARUM ein Versuch scheiterte
     # (GO-NEG-FAILURE status=…, FORMATION-FAILURE, GROUP-REMOVED reason=…).
+    # Als Client zählt, ob die Gruppe gefunden und betreten wurde: Scan-
+    # Fehler und Assoziation bleiben drin, „nicht gefunden“ nur einmal.
     sed -n "$((MARK + 1)),\$p" "$WPALOG" 2>/dev/null \
-        | grep -E "(P2P|WPS|CTRL-EVENT)-[A-Z]|Failed|failed|rejected|refused" \
-        | grep -vE "P2P-DEVICE-(FOUND|LOST)|P2P-FIND-STOPPED|CTRL-EVENT-(SCAN|BSS|REGDOM|NETWORK-NOT-FOUND)|WPS-AP-AVAILABLE" \
+        | grep -E "(P2P|WPS|CTRL-EVENT)-[A-Z]|Failed|failed|rejected|refused|Trying to associate|Associated with|SME: Trying to authenticate" \
+        | grep -vE "P2P-DEVICE-(FOUND|LOST)|P2P-FIND-STOPPED|CTRL-EVENT-(SCAN-STARTED|SCAN-RESULTS|BSS|REGDOM)|WPS-AP-AVAILABLE" \
+        | awk '!/NETWORK-NOT-FOUND/ || !n++' \
         | tail -40 | sed "s/^/    wpa: /" >&2
 }
 

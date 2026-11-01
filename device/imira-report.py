@@ -211,7 +211,10 @@ WPA_FOCUS = re.compile(
     r"P2P_CONNECT|P2P_PROV_DISC|P2P-PROV-DISC|P2P-GO-NEG|GO Negotiation|"
     r"P2P-GROUP-|P2P-INVITATION|AP-STA-|AP-ENABLED|WPS-[A-Z]|CTRL-EVENT-EAP|"
     r"CTRL-EVENT-(CONNECTED|DISCONNECTED)|Register frame command|"
-    r"IEEE 802\.11: (auth|assoc)")
+    r"IEEE 802\.11: (auth|assoc)|"
+    # Als Client: Findet das Telefon die Gruppe und tritt es ihr bei?
+    r"Trying to associate|Associated with|SME: Trying to authenticate|"
+    r"CTRL-EVENT-(ASSOC-REJECT|AUTH-REJECT|SCAN-FAILED)")
 
 
 def wpa_is_cast(path):
@@ -373,7 +376,10 @@ def iw_phy_summary():
             keep.append(l)
             continue
         if grab:
-            if l.startswith("\t\t\t") or l.startswith("\t\t *") or s.startswith("*") or s.startswith("#"):
+            # "total <= N, #channels <= M" steht auf einer Fortsetzungszeile
+            # der Kombination — genau die Zahl, auf die es ankommt.
+            if l.startswith("\t\t\t") or l.startswith("\t\t *") or s.startswith("*") or s.startswith("#") \
+                    or s.startswith("total"):
                 keep.append(l)
                 continue
             grab = False
